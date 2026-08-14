@@ -11,7 +11,10 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "clean": "rimraf dist release coverage .pack-app",
+    "clean": "rimraf dist coverage .pack-app",
+    "clean:release": "rimraf release",
+    "clean:win": "rimraf release/windows",
+    "clean:mac": "rimraf release/macos",
     "build": "pnpm clean && tsup && pnpm copy:assets",
     "copy:assets": "node scripts/copy-assets.mjs",
     "dev": "pnpm build && electron .",
@@ -23,8 +26,8 @@
     "package:stage": "node scripts/prepare-package.mjs",
     "package:sync-peers": "node scripts/sync-packaging-peers.mjs",
     "pack": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --dir",
-    "dist:win": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --win nsis portable --x64",
-    "dist:mac": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --mac dmg zip --x64 --arm64"
+    "dist:win": "pnpm clean:win && pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --config.directories.output=../release/windows --win nsis portable --x64",
+    "dist:mac": "pnpm clean:mac && pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --config.directories.output=../release/macos --mac dmg zip --x64 --arm64"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",

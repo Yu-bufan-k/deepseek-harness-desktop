@@ -51,11 +51,15 @@ pnpm run pack
 pnpm dist:win
 ```
 
+产物保存在项目内的 `release/windows` 目录。
+
 在 macOS 上生成未签名的 DMG 与 ZIP：
 
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false pnpm dist:mac
 ```
+
+产物保存在项目内的 `release/macos` 目录。两个平台的产物相互独立，后构建的平台不会清除先前平台的安装包；如需全部清空，可执行 `pnpm clean:release`。
 
 源码依赖由 `pnpm-lock.yaml` 锁定。打包阶段使用独立的 `packaging/package-lock.json` 创建 electron-builder 所需的平铺生产依赖。升级 dsh 后，需要执行 `pnpm package:sync-peers`、重新生成打包锁文件，并通过启动及重启冒烟测试。
 
