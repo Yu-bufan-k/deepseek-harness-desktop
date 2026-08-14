@@ -20,5 +20,15 @@ export default defineConfig([
     sourcemap: true,
     external: ["electron"],
     clean: false
+  },
+  {
+    entry: { "sidecar/electron-directory-picker": "src/sidecar/electron-directory-picker.ts" },
+    format: ["esm"],
+    platform: "node",
+    target: "node24",
+    bundle: true,
+    sourcemap: true,
+    external: ["@deepseek-ai/dsh-host-directory-picker"],
+    clean: false
   }
 ]);

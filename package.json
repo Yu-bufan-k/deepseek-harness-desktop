@@ -29,6 +29,7 @@
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-theme": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-directory-picker": "0.1.0-rc.6",
     "electron-log": "5.4.3",
     "electron-updater": "6.8.9"
   },

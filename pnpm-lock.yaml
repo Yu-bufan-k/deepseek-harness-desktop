@@ -15,6 +15,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-theme':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(12e0f219bbcc06db013d22ad0e1559b1)
+      '@deepseek-ai/dsh-host-directory-picker':
+        specifier: 0.1.0-rc.6
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
       electron-log:
         specifier: 5.4.3
         version: 5.4.3

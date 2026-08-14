@@ -10,6 +10,7 @@ DeepSeek Harness Desktop 是一个面向 Windows 与 macOS 的 Electron 桌面�
 - 使用安全加固的 Electron 窗口承载上游 React Web 界面。
 - 提供丝滑的品牌启动动画，并在 Harness 真正就绪后进入工作台。
 - 管理工作区、日志、Harness 重启与异常恢复。
+- Harness 页面与桌面菜单共用 Electron 系统目录选择器，不依赖上游的原生对话框 Worker。
 - 通过操作系统加密能力保存 API 凭据。
 - 支持 Stable、Beta 两个 GitHub Releases 更新通道。
 - 支持浅色、深色和跟随系统，外观设置与 Harness 共用同一份配置。
@@ -77,6 +78,9 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm dist:mac
 - 拦截非预期页面跳转；HTTPS 和邮件链接交由系统浏览器打开。
 - 凭据通过 Electron `safeStorage` 加密，在 Windows 上使用 DPAPI，在 macOS 上使用 Keychain 支持的加密能力。
 - 日志会脱敏常见 API Key、Token、密码和 Bearer Token。
+- 目录选择通过 Harness 官方 capability 扩展点接入 Electron 主进程；桥接服务仅监听随机回环端口，每次启动生成独立随机令牌。
+
+桌面端在启动 Harness 时加载独立的 `desktop.cordis.patch.yml` overlay，将 `host.pickDirectory` 绑定到桌面 capability。该 overlay 位于桌面运行数据目录，不修改上游包，也不覆盖用户的 Harness 配置；升级 Harness 时可通过协议兼容测试独立验证。
 
 桌面会话令牌会传递给内嵌界面，以便兼容后续协议。DeepSeek Harness rc.6 尚未强制校验该令牌，因此回环地址监听仍是当前本地传输的主要安全边界。
 

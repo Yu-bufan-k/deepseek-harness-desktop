@@ -17,6 +17,8 @@ export interface HarnessManagerOptions {
   workspace: () => string | null;
   credentials: () => Promise<Record<string, string>>;
   log: (message: string) => void;
+  desktopOverlayPath: string;
+  directoryPickerBridge: { port: number; token: string };
 }
 
 export class HarnessManager extends EventEmitter {
@@ -59,11 +61,14 @@ export class HarnessManager extends EventEmitter {
       ...secrets,
       DSH_HOME: this.options.dshHome,
       DSH_DESKTOP_SESSION_TOKEN: this.sessionToken,
+      DSH_DESKTOP_BRIDGE_PORT: String(this.options.directoryPickerBridge.port),
+      DSH_DESKTOP_BRIDGE_TOKEN: this.options.directoryPickerBridge.token,
       ELECTRON_RUN_AS_NODE: "1"
     };
 
     const child = spawn(process.execPath, [
-      "--expose-internals", this.dshEntry(), "web", "--host", "127.0.0.1", "--port", String(port)
+      "--expose-internals", this.dshEntry(), "web", "--patch", this.options.desktopOverlayPath,
+      "--host", "127.0.0.1", "--port", String(port)
     ], {
       cwd: workspace,
       env: environment,

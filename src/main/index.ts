@@ -10,6 +10,8 @@ import { CredentialStore } from "./credential-store.js";
 import { UpdateManager } from "./update-manager.js";
 import { createBackup } from "./backup.js";
 import { HarnessThemeStore } from "./harness-theme-store.js";
+import { DirectoryPickerBridge } from "./directory-picker-bridge.js";
+import { writeDesktopOverlay } from "./desktop-overlay.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
@@ -22,6 +24,7 @@ let settings: SettingsStore;
 let credentials: CredentialStore;
 let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
+let directoryPickerBridge: DirectoryPickerBridge;
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
 let startupCompleting = false;
@@ -35,6 +38,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 function preloadPath(): string { return path.join(__dirname, "..", "preload", "index.cjs"); }
 function rendererPath(file: string): string { return path.join(__dirname, "..", "renderer", file); }
 function appIconPath(): string { return rendererPath(path.join("assets", "deepseek-mark.png")); }
+function directoryPickerPluginPath(): string { return path.join(__dirname, "..", "sidecar", "electron-directory-picker.js"); }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 
 function currentInfo(): DesktopInfo {
@@ -286,10 +290,23 @@ function installMenu(): void {
 }
 
 async function chooseWorkspace(): Promise<string | null> {
-  const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
-  if (result.canceled || !result.filePaths[0]) return null;
-  await settings.patch({ workspacePath: result.filePaths[0] });
+  const selectedPath = await showDirectoryPicker();
+  if (!selectedPath) return null;
+  await settings.patch({ workspacePath: selectedPath });
   await restartHarness();
+  return selectedPath;
+}
+
+async function showDirectoryPicker(): Promise<string | null> {
+  const parent = BrowserWindow.getFocusedWindow();
+  const options: Electron.OpenDialogOptions = {
+    title: "选择工作区目录",
+    properties: ["openDirectory", "createDirectory"]
+  };
+  const result = parent
+    ? await dialog.showOpenDialog(parent, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) return null;
   return result.filePaths[0];
 }
 
@@ -377,7 +394,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   if (themeStore) unwatchFile(themeStore.filePath);
-  void harness.stop().finally(() => app.quit());
+  void harness.stop().then(() => directoryPickerBridge?.stop()).finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
@@ -395,11 +412,19 @@ void app.whenReady().then(async () => {
   await settings.load();
   credentials = new CredentialStore(userData);
   updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
+  directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);
+  const bridgeInfo = await directoryPickerBridge.start();
+  const desktopOverlayPath = await writeDesktopOverlay(
+    path.join(userData, "desktop-runtime"),
+    directoryPickerPluginPath()
+  );
   harness = new HarnessManager({
     dshHome: path.join(userData, "dsh"),
     workspace: () => settings.get().workspacePath,
     credentials: () => credentials.environment(),
-    log: (message) => log.info(message)
+    log: (message) => log.info(message),
+    desktopOverlayPath,
+    directoryPickerBridge: bridgeInfo
   });
   harness.on("changed", (info) => {
     broadcastInfo();
