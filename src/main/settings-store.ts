@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UpdateChannel } from "../shared/contracts.js";
+import type { BillingSettings } from "../shared/billing.js";
 
 export interface DesktopSettings {
   workspacePath: string | null;
@@ -9,6 +10,7 @@ export interface DesktopSettings {
   lastGoodVersion: string | null;
   pendingVersion: string | null;
   failedStarts: number;
+  billing?: BillingSettings;
 }
 
 const defaults: DesktopSettings = {
