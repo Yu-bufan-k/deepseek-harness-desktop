@@ -21,7 +21,8 @@ describe("renderer pages", () => {
 
   it("provides a responsive session billing rail with per-model history", async () => {
     const source = await readFile(new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url), "utf8");
-    expect(source).toContain("(min-width: 1540px)");
+    expect(source).toContain("findComposerBoundary");
+    expect(source).toContain("available >= 338");
     expect(source).toContain("模型费用 · 点击查看详情");
     expect(source).toContain("model.totals");
   });
