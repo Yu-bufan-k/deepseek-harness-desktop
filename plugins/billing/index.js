@@ -21,7 +21,10 @@ const definition = {
   schema,
   init: () => ({ context: null, samples: [], last: null }),
   apply: (state, event) => {
-    if (event.type === "request/context") return { ...state, context: event.data };
+    // A retry can reuse the same turn/step. Resetting `last` here keeps usage
+    // from separate provider requests additive, while streaming usage updates
+    // within one request still replace their previous cumulative snapshot.
+    if (event.type === "request/context") return { ...state, context: event.data, last: null };
     let turn;
     let step;
     let usage;
@@ -38,7 +41,7 @@ const definition = {
     return { ...state, samples, last: { turn, step } };
   },
   view: (state) => state.samples,
-  stateVersion: 1
+  stateVersion: 2
 };
 
 export const name = "desktop-billing";

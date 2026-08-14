@@ -9,7 +9,7 @@ function validRule(value: unknown): value is BillingPriceRule {
   if (!value || typeof value !== "object") return false;
   const rule = value as Partial<BillingPriceRule>;
   return typeof rule.id === "string" && typeof rule.provider === "string" && typeof rule.model === "string"
-    && typeof rule.label === "string" && typeof rule.currency === "string"
+    && typeof rule.label === "string" && typeof rule.currency === "string" && /^[A-Z]{3}$/i.test(rule.currency)
     && ["official", "custom", "free"].includes(rule.mode ?? "")
     && typeof rule.effectiveFrom === "string" && Number.isFinite(Date.parse(rule.effectiveFrom))
     && validRates(rule.rates)
@@ -27,11 +27,23 @@ function validRates(rates: unknown): boolean {
 export function validateCatalog(value: unknown): BillingCatalog {
   if (!value || typeof value !== "object") throw new Error("价格清单格式无效");
   const catalog = value as Partial<BillingCatalog>;
-  if (catalog.schemaVersion !== 1 || typeof catalog.publishedAt !== "string" || typeof catalog.source !== "string"
+  if (catalog.schemaVersion !== 1 || typeof catalog.publishedAt !== "string" || !Number.isFinite(Date.parse(catalog.publishedAt)) || typeof catalog.source !== "string"
     || !Array.isArray(catalog.rules) || !catalog.rules.every(validRule)) {
     throw new Error("价格清单字段不完整或包含无效单价");
   }
+  if (new Set(catalog.rules.map((rule) => rule.id)).size !== catalog.rules.length) throw new Error("价格清单包含重复规则 ID");
   return structuredClone(catalog as BillingCatalog);
+}
+
+function assertAppendOnlyCatalog(current: BillingCatalog, remote: BillingCatalog): void {
+  const remoteById = new Map(remote.rules.map((rule) => [rule.id, rule]));
+  const billingSignature = ({ id, provider, model, currency, mode, effectiveFrom, rates, peakRates, peakWindows }: BillingPriceRule) => JSON.stringify({ id, provider, model, currency, mode, effectiveFrom, rates, peakRates, peakWindows });
+  for (const rule of current.rules) {
+    const next = remoteById.get(rule.id);
+    if (!next || billingSignature(next) !== billingSignature(rule)) {
+      throw new Error(`价格更新试图删除或修改历史规则：${rule.id}`);
+    }
+  }
 }
 
 export class BillingStore {
@@ -42,7 +54,16 @@ export class BillingStore {
   async load(): Promise<void> {
     const catalogPath = path.join(this.resourcesPath, "pricing", "prices.json");
     this.builtinCatalog = validateCatalog(JSON.parse(await readFile(catalogPath, "utf8")));
-    if (!this.settings.get().billing) await this.settings.patch({ billing: this.defaults() });
+    const stored = this.settings.get().billing;
+    if (!stored) await this.settings.patch({ billing: this.defaults() });
+    else {
+      try { await this.save(stored); }
+      catch {
+        const recovered = this.defaults();
+        if (Array.isArray(stored.customRules)) recovered.customRules = stored.customRules.filter(validRule);
+        await this.settings.patch({ billing: recovered });
+      }
+    }
   }
 
   get(): BillingSettings {
@@ -52,7 +73,9 @@ export class BillingStore {
   async save(next: BillingSettings): Promise<BillingSettings> {
     const catalog = validateCatalog(next.catalog);
     if (!Array.isArray(next.customRules) || !next.customRules.every(validRule)) throw new Error("自定义价格规则无效");
+    if (new Set(next.customRules.map((rule) => rule.id)).size !== next.customRules.length) throw new Error("自定义价格规则包含重复 ID");
     if (!Number.isInteger(next.checkIntervalHours) || next.checkIntervalHours < 1 || next.checkIntervalHours > 720) throw new Error("检查间隔应为 1–720 小时");
+    if (next.lastCheckedAt !== null && (typeof next.lastCheckedAt !== "string" || !Number.isFinite(Date.parse(next.lastCheckedAt)))) throw new Error("价格检查时间无效");
     const value: BillingSettings = {
       autoUpdate: Boolean(next.autoUpdate),
       checkIntervalHours: next.checkIntervalHours,
@@ -70,6 +93,7 @@ export class BillingStore {
     const remote = validateCatalog(await response.json());
     const current = this.get();
     const updated = Date.parse(remote.publishedAt) > Date.parse(current.catalog.publishedAt);
+    if (updated) assertAppendOnlyCatalog(current.catalog, remote);
     const checkedAt = new Date().toISOString();
     const settings = await this.save({ ...current, lastCheckedAt: checkedAt, catalog: updated ? remote : current.catalog });
     return { updated, checkedAt, settings, message: updated ? "已更新到最新官方价格清单" : "当前已是最新价格清单" };

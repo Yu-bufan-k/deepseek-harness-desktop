@@ -90,6 +90,7 @@
     button.primary { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
     button.primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
     button.danger { height: 28px; color: var(--dsw-alias-state-error-primary); background: transparent; }
+    button.edit { height: 28px; background: transparent; }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
     dialog { width: min(590px, calc(100% - 32px)); border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px; padding: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: 0 20px 60px rgba(0,0,0,.2); }
     dialog::backdrop { background: rgba(16, 18, 22, .28); backdrop-filter: blur(2px); }
@@ -175,7 +176,7 @@
 
 <dialog id="priceDialog" aria-labelledby="dialogTitle">
   <form method="dialog" id="priceForm">
-    <div class="dialog-head"><h2 id="dialogTitle">添加价格规则</h2><p class="section-copy">规则从保存时开始生效，不会改变更早请求的计价方式。</p></div>
+    <div class="dialog-head"><h2 id="dialogTitle">添加价格规则</h2><p class="section-copy">可指定生效时间；更早的请求仍按当时匹配到的规则计算。</p></div>
     <div class="dialog-body">
       <div class="mode-grid" role="radiogroup" aria-label="计费方式">
         <label class="mode-card"><input type="radio" name="priceMode" value="custom" checked><strong>按 Token 计费</strong><small>分别设置输入、缓存命中和输出单价。</small></label>
@@ -184,6 +185,7 @@
       <div class="form-grid">
         <div class="field"><label for="priceProvider">供应商路由</label><input id="priceProvider" autocomplete="off" placeholder="例如 deepseek-official"></div>
         <div class="field"><label for="priceModel">模型 ID</label><input id="priceModel" autocomplete="off" placeholder="例如 deepseek-v4-flash"></div>
+        <div class="field wide"><label for="priceEffective">开始生效时间</label><input id="priceEffective" type="datetime-local"></div>
         <div class="price-fields" id="priceFields">
           <div class="field"><label for="priceCurrency">币种</label><input id="priceCurrency" value="CNY" maxlength="3"></div>
           <div class="field"><label for="priceInput">未缓存输入</label><input id="priceInput" type="number" min="0" step="any" placeholder="每百万 Token"></div>
@@ -203,6 +205,8 @@
   const systemDark = matchMedia('(prefers-color-scheme: dark)');
   let billing;
   let usageIndex = { updatedAt: '', sessions: [] };
+  let editingRuleId = null;
+  let pendingEditTarget = null;
   let themePreference = 'system';
   let toastTimer;
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -233,7 +237,8 @@
   function costOf(rule, sample) {
     if (rule.mode === 'free') return 0;
     const clock = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(sample.time);
-    const rates = rule.peakRates && rule.peakWindows?.some(({ start, end }) => clock >= start && clock < end) ? rule.peakRates : rule.rates;
+    const inWindow = ({ start, end }) => start < end ? clock >= start && clock < end : clock >= start || clock < end;
+    const rates = rule.peakRates && rule.peakWindows?.some(inWindow) ? rule.peakRates : rule.rates;
     return (sample.uncachedInputTokens * rates.input + sample.cacheReadTokens * rates.cacheRead + sample.cacheWriteTokens * rates.cacheWrite + sample.outputTokens * rates.output) / 1e6;
   }
   function summarize(samples) {
@@ -280,7 +285,9 @@
     const card = document.createElement('article'); card.className = 'price-card';
     const free = rule.mode === 'free';
     card.innerHTML = `<div class="price-head"><div><div class="model-name">${escapeHtml(rule.provider)} / ${escapeHtml(rule.model)}</div><div class="route">从 ${escapeHtml(new Date(rule.effectiveFrom).toLocaleString())} 开始覆盖</div></div><div class="badges"><span class="badge custom">${free ? '免费' : '自定义'}</span></div></div>${free ? '' : `<div class="rate-table"><div class="rate-row"><span class="rate-label">${escapeHtml(rule.currency)}</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存')}${rateCell(rule.rates.output, '输出')}</div></div>`}`;
+    const edit = document.createElement('button'); edit.className = 'edit'; edit.textContent = '编辑'; edit.onclick = () => openRuleDialog({ provider: rule.provider, model: rule.model }, rule);
     const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = '删除';
+    card.querySelector('.badges').append(edit);
     card.querySelector('.badges').append(remove);
     remove.onclick = async () => { const next = await window.desktop.setBillingSettings({ ...billing, customRules: billing.customRules.filter((item) => item.id !== rule.id) }); render(next); notify('规则已删除'); };
     return card;
@@ -293,11 +300,27 @@
     if (next.customRules.length) $('customList').replaceChildren(...next.customRules.map(customCard));
     else { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>当前没有自定义规则</strong>第三方模型会显示“未配置单价”，直到你添加对应规则。</div>'; $('customList').replaceChildren(empty); }
     renderUsage();
+    if (pendingEditTarget) { const target = pendingEditTarget; pendingEditTarget = null; handleBillingEditTarget(target); }
   }
   function setView(view) { const usage = view === 'usage'; $('usageView').hidden = !usage; $('pricesView').hidden = usage; $('usageTab').setAttribute('aria-selected', String(usage)); $('pricesTab').setAttribute('aria-selected', String(!usage)); }
   $('usageTab').onclick = () => setView('usage'); $('pricesTab').onclick = () => setView('prices');
   document.querySelectorAll('input[name="priceMode"]').forEach((radio) => radio.onchange = () => $('priceFields').hidden = radio.value === 'free' && radio.checked);
-  $('openAdd').onclick = () => { $('priceForm').reset(); $('priceCurrency').value = 'CNY'; $('priceFields').hidden = false; $('priceDialog').showModal(); setTimeout(() => $('priceProvider').focus(), 0); };
+  const localDateTime = (value = Date.now()) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+  function openRuleDialog(target = {}, rule = null) {
+    editingRuleId = rule?.id || null;
+    $('priceForm').reset();
+    $('dialogTitle').textContent = rule ? '编辑价格规则' : (target.provider && target.model ? '修正模型价格' : '添加价格规则');
+    $('priceProvider').value = rule?.provider || target.provider || '';
+    $('priceModel').value = rule?.model || target.model || '';
+    $('priceEffective').value = localDateTime(rule?.effectiveFrom || Date.now());
+    $('priceCurrency').value = rule?.currency || 'CNY';
+    const mode = rule?.mode || 'custom';
+    document.querySelector(`input[name="priceMode"][value="${mode}"]`).checked = true;
+    $('priceFields').hidden = mode === 'free';
+    if (rule && mode !== 'free') { $('priceInput').value = rule.rates.input; $('priceCache').value = rule.rates.cacheRead; $('priceOutput').value = rule.rates.output; }
+    $('priceDialog').showModal(); setTimeout(() => (target.provider ? $('priceInput') : $('priceProvider')).focus(), 0);
+  }
+  $('openAdd').onclick = () => openRuleDialog();
   $('billingAuto').onchange = async () => { try { render(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); notify('自动检查设置已保存'); } catch (error) { render(billing); setStatus(error instanceof Error ? error.message : String(error), 'error'); } };
   $('billingRefresh').onclick = async () => { $('billingRefresh').disabled = true; setStatus('正在检查 DeepSeek 官方价格…', 'busy'); try { const result = await window.desktop.checkBillingPrices(); render(result.settings); setStatus(result.message); } catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); } finally { $('billingRefresh').disabled = false; } };
   $('savePrice').onclick = async () => {
@@ -307,11 +330,23 @@
     const number = (id) => mode === 'free' ? 0 : Number($(id).value);
     const rates = { input: number('priceInput'), cacheRead: number('priceCache'), cacheWrite: number('priceInput'), output: number('priceOutput') };
     if (Object.values(rates).some((value) => !Number.isFinite(value) || value < 0)) { notify('请填写完整、有效的非负单价'); return; }
-    const rule = { id: `custom-${Date.now()}`, provider, model, label: `${provider}/${model}（自定义）`, currency: $('priceCurrency').value.trim().toUpperCase() || 'CNY', mode, effectiveFrom: new Date().toISOString(), rates };
-    try { render(await window.desktop.setBillingSettings({ ...billing, customRules: [...billing.customRules, rule] })); $('priceDialog').close(); notify('价格规则已保存'); } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    const currency = $('priceCurrency').value.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) { notify('币种请填写 3 位代码，例如 CNY 或 USD'); return; }
+    const effectiveFrom = new Date($('priceEffective').value);
+    if (!Number.isFinite(effectiveFrom.getTime())) { notify('请选择有效的生效时间'); return; }
+    const rule = { id: editingRuleId || `custom-${Date.now()}`, provider, model, label: `${provider}/${model}（自定义）`, currency, mode, effectiveFrom: effectiveFrom.toISOString(), rates };
+    const customRules = editingRuleId ? billing.customRules.map((item) => item.id === editingRuleId ? rule : item) : [...billing.customRules, rule];
+    try { render(await window.desktop.setBillingSettings({ ...billing, customRules })); $('priceDialog').close(); notify('价格规则已保存，费用已重新计算'); } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   };
   window.desktop.onBillingChanged(render);
   window.desktop.onBillingUsageChanged((next) => { usageIndex = next; renderUsage(); });
+  function handleBillingEditTarget(target) {
+    setView('prices');
+    if (!billing) { pendingEditTarget = target; return; }
+    const existing = billing.customRules.filter((rule) => rule.provider.toLowerCase() === target.provider.toLowerCase() && rule.model.toLowerCase() === target.model.toLowerCase()).sort((a, b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
+    openRuleDialog(target, existing || null);
+  }
+  window.desktop.onBillingEditRequested(handleBillingEditTarget);
   window.desktop.onInfoChanged((info) => applyTheme(info.themePreference));
   Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([info, settings, usage]) => { usageIndex = usage; applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
 </script>

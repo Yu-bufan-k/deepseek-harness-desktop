@@ -72,6 +72,10 @@ export interface BillingCostLine extends BillingUsageSample {
 
 const normalize = (value: string): string => value.trim().toLowerCase();
 
+export function isBillingPeakWindow(clock: string, start: string, end: string): boolean {
+  return start < end ? clock >= start && clock < end : clock >= start || clock < end;
+}
+
 export function selectBillingRule(settings: BillingSettings, sample: BillingUsageSample): BillingPriceRule | null {
   const provider = normalize(sample.provider);
   const model = normalize(sample.model);
@@ -90,7 +94,7 @@ export function calculateBillingCost(settings: BillingSettings, sample: BillingU
   const rule = selectBillingRule(settings, sample);
   if (!rule) return { ...sample, ruleId: null, currency: null, amount: null };
   const chinaTime = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(sample.time);
-  const rates = rule.peakRates && rule.peakWindows?.some(({ start, end }) => chinaTime >= start && chinaTime < end)
+  const rates = rule.peakRates && rule.peakWindows?.some(({ start, end }) => isBillingPeakWindow(chinaTime, start, end))
     ? rule.peakRates
     : rule.rates;
   const amount = rule.mode === "free" ? 0 : (

@@ -3,6 +3,7 @@ import {
   IPC,
   type DesktopApi,
   type DesktopInfo,
+  type BillingModelTarget,
   type OpenWorkspaceRequest,
   type OpenWorkspaceResult,
   type ThemePreference,
@@ -30,8 +31,9 @@ const api: DesktopApi = {
   chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
   openSettings: () => ipcRenderer.invoke(IPC.openSettings),
-  openBilling: () => ipcRenderer.invoke(IPC.openBilling),
+  openBilling: (target?: BillingModelTarget) => ipcRenderer.invoke(IPC.openBilling, target),
   checkUpdate: () => ipcRenderer.invoke(IPC.checkUpdate),
+  checkHarnessUpdate: () => ipcRenderer.invoke(IPC.checkHarnessUpdate),
   downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
   installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
   setUpdateChannel: (channel: UpdateChannel) => ipcRenderer.invoke(IPC.setUpdateChannel, channel),
@@ -50,6 +52,11 @@ const api: DesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, index: BillingUsageIndex) => listener(index);
     ipcRenderer.on(IPC.billingUsageChanged, handler);
     return () => ipcRenderer.removeListener(IPC.billingUsageChanged, handler);
+  },
+  onBillingEditRequested: (listener: (target: BillingModelTarget) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, target: BillingModelTarget) => listener(target);
+    ipcRenderer.on(IPC.billingEditRequested, handler);
+    return () => ipcRenderer.removeListener(IPC.billingEditRequested, handler);
   },
   onInfoChanged: (listener: (info: DesktopInfo) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: DesktopInfo) => listener(info);

@@ -86,6 +86,9 @@
     input { min-width: 0; flex: 1 1 210px; outline: none; }
     input::placeholder { color: var(--dsw-alias-label-caption); }
     .status-line { min-height: 24px; display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+    .update-block { padding: 14px 0 3px; }
+    .update-block + .update-block { margin-top: 10px; border-top: 1px solid var(--dsw-alias-border-l1); }
+    .update-title { margin: 0; font-size: 13px; font-weight: 590; }
     .status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; background: var(--dsw-alias-label-caption); }
     .status-dot[data-phase="ready"], .status-dot[data-phase="available"] { background: var(--dsw-alias-state-success-primary); }
     .status-dot[data-phase="checking"], .status-dot[data-phase="downloading"], .status-dot[data-phase="installing"] { background: var(--dsw-alias-state-business-primary); }
@@ -129,12 +132,20 @@
   </section>
 
   <section class="group">
-    <div class="group-heading"><h2>更新</h2><p class="description">桌面壳与验证过的 Harness 运行时会作为整包更新。</p></div>
-    <div class="actions">
-      <select id="channel" aria-label="更新通道"><option value="stable">Stable</option><option value="beta">Beta</option></select>
-      <button id="check">检查更新</button><button id="download">下载更新</button><button id="install">重启并安装</button>
+    <div class="group-heading"><h2>更新</h2><p class="description">桌面应用和经过兼容性验证的 Harness 运行时会作为整包发布。</p></div>
+    <div class="update-block">
+      <h3 class="update-title">桌面应用</h3>
+      <div class="actions">
+        <select id="channel" aria-label="更新通道"><option value="stable">Stable</option><option value="beta">Beta</option></select>
+        <button id="check">检查桌面更新</button><button id="download">下载更新</button><button id="install">重启并安装</button>
+      </div>
+      <div class="status-line"><span class="status-dot" id="updateDot"></span><span id="updateStatus"></span></div>
     </div>
-    <div class="status-line"><span class="status-dot" id="updateDot"></span><span id="updateStatus"></span></div>
+    <div class="update-block">
+      <h3 class="update-title">DeepSeek Harness 运行时</h3>
+      <div class="actions"><button id="checkHarness">检查 Harness 新版</button></div>
+      <div class="status-line"><span class="status-dot" id="harnessUpdateDot"></span><span id="harnessUpdateStatus"></span></div>
+    </div>
   </section>
 
   <section class="group">
@@ -174,6 +185,14 @@
     $('check').disabled = !update.configured || update.phase === 'checking';
     $('download').disabled = update.phase !== 'available';
     $('install').disabled = update.phase !== 'ready';
+    const harnessUpdate = next.harnessUpdate;
+    $('harnessUpdateDot').dataset.phase = harnessUpdate.phase;
+    $('checkHarness').disabled = harnessUpdate.phase === 'checking';
+    $('harnessUpdateStatus').textContent = harnessUpdate.phase === 'checking' ? '正在查询 npm 官方软件包源…'
+      : harnessUpdate.phase === 'error' ? `检查失败 · ${harnessUpdate.errorSummary}`
+      : harnessUpdate.phase === 'ready' && harnessUpdate.updateAvailable ? `发现上游 ${harnessUpdate.latestVersion} · 当前 ${harnessUpdate.currentVersion}，等待桌面版兼容性验证后随整包更新`
+      : harnessUpdate.phase === 'ready' ? `当前 ${harnessUpdate.currentVersion} · 已是 npm 最新版本${harnessUpdate.checkedAt ? ` · ${new Date(harnessUpdate.checkedAt).toLocaleString()} 检查` : ''}`
+      : `当前 ${harnessUpdate.currentVersion} · 尚未检查上游版本`;
   }
   async function act(task, success) {
     try {
@@ -190,6 +209,7 @@
   $('restart').onclick = () => act(() => window.desktop.restartHarness(), 'Harness 已重启');
   $('logs').onclick = () => act(() => window.desktop.openLogs(), '日志目录已打开');
   $('check').onclick = () => act(() => window.desktop.checkUpdate(), '检查完成');
+  $('checkHarness').onclick = () => act(() => window.desktop.checkHarnessUpdate(), 'Harness 版本检查完成');
   $('download').onclick = () => act(() => window.desktop.downloadUpdate(), '下载完成');
   $('install').onclick = () => act(() => window.desktop.installUpdate(), '正在安装');
   $('channel').onchange = () => act(() => window.desktop.setUpdateChannel($('channel').value), '更新通道已修改');

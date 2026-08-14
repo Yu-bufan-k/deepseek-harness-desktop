@@ -9,8 +9,11 @@ async function scriptsOf(file: string): Promise<string[]> {
 describe("renderer pages", () => {
   it("keeps billing out of general settings", async () => {
     const html = await readFile(new URL("../src/renderer/settings.html", import.meta.url), "utf8");
+    const scripts = await scriptsOf("settings.html");
     expect(html).not.toContain("id=\"billingAuto\"");
     expect(html).not.toContain("id=\"priceList\"");
+    expect(html).toContain("检查 Harness 新版");
+    expect(() => Function(scripts[0]!)).not.toThrow();
   });
 
   it("parses the standalone billing page script", async () => {
@@ -21,16 +24,25 @@ describe("renderer pages", () => {
     expect(html).toContain("用量总览");
     expect(html).toContain("全部对话预估费用");
     expect(html).toContain("onBillingUsageChanged");
+    expect(html).toContain("onBillingEditRequested");
+    expect(html).toContain("开始生效时间");
   });
 
   it("provides a responsive session billing rail with per-model history", async () => {
     const source = await readFile(new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url), "utf8");
     expect(source).toContain("findComposerBoundary");
-    expect(source).toContain("available >= 338");
+    expect(source).toContain("available >= 352");
     expect(source).toContain("模型费用 · 点击查看详情");
     expect(source).toContain("model.totals");
     expect(source).toContain("modelDirectories.directoryFor(sessionId).store");
     expect(source).toContain("reportBillingUsage");
+    expect(source).toContain("修正此模型价格");
+  });
+
+  it("keeps separate retry requests additive in the billing projection", async () => {
+    const source = await readFile(new URL("../plugins/billing/index.js", import.meta.url), "utf8");
+    expect(source).toContain("context: event.data, last: null");
+    expect(source).toContain("stateVersion: 2");
   });
 
   it("keeps the billing application-menu label unclipped", async () => {

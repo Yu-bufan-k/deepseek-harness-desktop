@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateBillingCost, selectBillingRule, type BillingSettings, type BillingUsageSample } from "../src/shared/billing.js";
+import { calculateBillingCost, isBillingPeakWindow, selectBillingRule, type BillingSettings, type BillingUsageSample } from "../src/shared/billing.js";
 
 const rates = (input: number, cacheRead: number, output: number) => ({ input, cacheRead, cacheWrite: input, output });
 const settings: BillingSettings = {
@@ -25,6 +25,11 @@ const sample = (iso: string): BillingUsageSample => ({
 });
 
 describe("billing", () => {
+  it("supports peak windows that cross midnight", () => {
+    expect(isBillingPeakWindow("23:30", "22:00", "02:00")).toBe(true);
+    expect(isBillingPeakWindow("01:30", "22:00", "02:00")).toBe(true);
+    expect(isBillingPeakWindow("12:00", "22:00", "02:00")).toBe(false);
+  });
   it("uses off-peak and peak rates in Asia/Shanghai", () => {
     expect(calculateBillingCost(settings, sample("2026-08-17T08:00:00+08:00")).amount).toBeCloseTo(6.05);
     expect(calculateBillingCost(settings, sample("2026-08-17T09:30:00+08:00")).amount).toBeCloseTo(12.1);

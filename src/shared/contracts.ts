@@ -28,6 +28,17 @@ export interface UpdateState {
   errorSummary: string | null;
 }
 
+export interface HarnessUpdateState {
+  phase: "idle" | "checking" | "ready" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  checkedAt: string | null;
+  errorSummary: string | null;
+}
+
+export interface BillingModelTarget { provider: string; model: string; }
+
 export type UpdateChannel = "stable" | "beta";
 export type ThemePreference = "light" | "dark" | "system";
 
@@ -35,6 +46,7 @@ export interface DesktopInfo {
   appVersion: string;
   harness: HarnessInfo;
   update: UpdateState;
+  harnessUpdate: HarnessUpdateState;
   updateChannel: UpdateChannel;
   themePreference: ThemePreference;
   userDataPath: string;
@@ -51,6 +63,7 @@ export const IPC = {
   openSettings: "desktop:open-settings",
   openBilling: "desktop:open-billing",
   checkUpdate: "desktop:check-update",
+  checkHarnessUpdate: "desktop:check-harness-update",
   downloadUpdate: "desktop:download-update",
   installUpdate: "desktop:install-update",
   setUpdateChannel: "desktop:set-update-channel",
@@ -68,6 +81,7 @@ export const IPC = {
   reportBillingUsage: "desktop:report-billing-usage",
   getBillingUsage: "desktop:get-billing-usage",
   billingUsageChanged: "desktop:billing-usage-changed",
+  billingEditRequested: "desktop:billing-edit-requested",
   infoChanged: "desktop:info-changed",
   harnessIntegrationReady: "desktop:harness-integration-ready",
   openWorkspace: "desktop:open-workspace",
@@ -92,8 +106,9 @@ export interface DesktopApi {
   chooseWorkspace(): Promise<string | null>;
   openLogs(): Promise<void>;
   openSettings(): Promise<void>;
-  openBilling(): Promise<void>;
+  openBilling(target?: BillingModelTarget): Promise<void>;
   checkUpdate(): Promise<UpdateState>;
+  checkHarnessUpdate(): Promise<HarnessUpdateState>;
   downloadUpdate(): Promise<UpdateState>;
   installUpdate(): Promise<void>;
   setUpdateChannel(channel: UpdateChannel): Promise<UpdateState>;
@@ -109,6 +124,7 @@ export interface DesktopApi {
   reportBillingUsage(index: BillingUsageIndex): Promise<void>;
   getBillingUsage(): Promise<BillingUsageIndex>;
   onBillingUsageChanged(listener: (index: BillingUsageIndex) => void): () => void;
+  onBillingEditRequested(listener: (target: BillingModelTarget) => void): () => void;
   onBillingChanged(listener: (settings: BillingSettings) => void): () => void;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;

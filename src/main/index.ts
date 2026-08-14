@@ -5,7 +5,9 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type Ipc
 import log from "electron-log/main.js";
 import {
   IPC,
+  type BillingModelTarget,
   type DesktopInfo,
+  type HarnessUpdateState,
   type HarnessInfo,
   type OpenWorkspaceRequest,
   type OpenWorkspaceResult,
@@ -25,6 +27,7 @@ import { DirectoryPickerBridge } from "./directory-picker-bridge.js";
 import { writeDesktopOverlay } from "./desktop-overlay.js";
 import { resolveLaunchDirectories } from "./launch-paths.js";
 import { BillingStore } from "./billing-store.js";
+import { checkHarnessUpdate as fetchHarnessUpdate } from "./harness-update-checker.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
@@ -43,6 +46,7 @@ let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
 let billing: BillingStore;
+let harnessUpdate: HarnessUpdateState = { phase: "idle", currentVersion: "", latestVersion: null, updateAvailable: false, checkedAt: null, errorSummary: null };
 let billingUsageIndex: BillingUsageIndex = { updatedAt: "", sessions: [] };
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
@@ -104,6 +108,7 @@ function currentInfo(): DesktopInfo {
     appVersion: app.getVersion(),
     harness: harness.getInfo(),
     update: updates.getState(),
+    harnessUpdate: { ...harnessUpdate, currentVersion: harness.getInfo().version },
     updateChannel: value.updateChannel,
     themePreference: themeStore.getPreference(),
     userDataPath: app.getPath("userData"),
@@ -280,6 +285,7 @@ async function showSettings(): Promise<void> {
   secureWindow(settingsWindow);
   settingsWindow.on("closed", () => { settingsWindow = null; });
   await settingsWindow.loadFile(rendererPath("settings.html"));
+  if (harnessUpdate.phase === "idle") void checkHarnessVersion();
 }
 
 function isBillingSample(value: unknown): value is BillingUsageSample {
@@ -310,10 +316,19 @@ function broadcastBillingUsage(): void {
   if (billingWindow && !billingWindow.isDestroyed()) billingWindow.webContents.send(IPC.billingUsageChanged, billingUsageIndex);
 }
 
-async function showBilling(): Promise<void> {
+function billingTarget(value: unknown): BillingModelTarget | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object") throw new Error("无效的模型价格目标");
+  const target = value as Partial<BillingModelTarget>;
+  if (typeof target.provider !== "string" || typeof target.model !== "string" || !target.provider.trim() || !target.model.trim()) throw new Error("无效的模型价格目标");
+  return { provider: target.provider.trim().slice(0, 200), model: target.model.trim().slice(0, 300) };
+}
+
+async function showBilling(target?: BillingModelTarget): Promise<void> {
   if (billingWindow && !billingWindow.isDestroyed()) {
     billingWindow.show();
     billingWindow.focus();
+    if (target) billingWindow.webContents.send(IPC.billingEditRequested, target);
     return;
   }
   billingWindow = new BrowserWindow({
@@ -333,6 +348,16 @@ async function showBilling(): Promise<void> {
   secureWindow(billingWindow);
   billingWindow.on("closed", () => { billingWindow = null; });
   await billingWindow.loadFile(rendererPath("billing.html"));
+  if (target && billingWindow && !billingWindow.isDestroyed()) billingWindow.webContents.send(IPC.billingEditRequested, target);
+}
+
+async function checkHarnessVersion(): Promise<HarnessUpdateState> {
+  const currentVersion = harness.getInfo().version;
+  harnessUpdate = { ...harnessUpdate, phase: "checking", currentVersion, errorSummary: null };
+  broadcastInfo();
+  harnessUpdate = await fetchHarnessUpdate(currentVersion);
+  broadcastInfo();
+  return harnessUpdate;
 }
 
 async function showUpdateResult(state: UpdateState): Promise<void> {
@@ -463,8 +488,9 @@ function registerIpc(): void {
   handle(IPC.chooseWorkspace, () => chooseWorkspace());
   handle(IPC.openLogs, async () => { await shell.openPath(app.getPath("logs")); });
   handle(IPC.openSettings, () => showSettings());
-  handle(IPC.openBilling, () => showBilling());
+  handle(IPC.openBilling, (_event, target?: unknown) => showBilling(billingTarget(target)));
   handle(IPC.checkUpdate, () => updates.check());
+  handle(IPC.checkHarnessUpdate, () => checkHarnessVersion());
   handle(IPC.downloadUpdate, () => updates.download());
   handle(IPC.finishSplashAnimation, () => { resolveSplashAnimation(); });
   handle(IPC.retryStartup, () => retryStartup());
