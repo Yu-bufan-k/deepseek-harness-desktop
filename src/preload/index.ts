@@ -8,6 +8,7 @@ import {
   type ThemePreference,
   type UpdateChannel
 } from "../shared/contracts.js";
+import type { BillingSettings } from "../shared/billing.js";
 
 ipcRenderer.on(IPC.openWorkspace, (_event, request: OpenWorkspaceRequest) => {
   window.postMessage({ type: IPC.openWorkspace, request }, window.location.origin);
@@ -28,6 +29,7 @@ const api: DesktopApi = {
   restartHarness: () => ipcRenderer.invoke(IPC.restartHarness),
   chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
+  openSettings: () => ipcRenderer.invoke(IPC.openSettings),
   checkUpdate: () => ipcRenderer.invoke(IPC.checkUpdate),
   downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
   installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
@@ -38,10 +40,18 @@ const api: DesktopApi = {
   setCredential: (name: string, value: string) => ipcRenderer.invoke(IPC.setCredential, name, value),
   hasCredential: (name: string) => ipcRenderer.invoke(IPC.hasCredential, name),
   removeCredential: (name: string) => ipcRenderer.invoke(IPC.removeCredential, name),
+  getBillingSettings: () => ipcRenderer.invoke(IPC.getBillingSettings),
+  setBillingSettings: (settings: BillingSettings) => ipcRenderer.invoke(IPC.setBillingSettings, settings),
+  checkBillingPrices: () => ipcRenderer.invoke(IPC.checkBillingPrices),
   onInfoChanged: (listener: (info: DesktopInfo) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: DesktopInfo) => listener(info);
     ipcRenderer.on(IPC.infoChanged, handler);
     return () => ipcRenderer.removeListener(IPC.infoChanged, handler);
+  },
+  onBillingChanged: (listener: (settings: BillingSettings) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, settings: BillingSettings) => listener(settings);
+    ipcRenderer.on(IPC.billingChanged, handler);
+    return () => ipcRenderer.removeListener(IPC.billingChanged, handler);
   },
   onSplashReady: (listener: () => void) => {
     const handler = () => listener();

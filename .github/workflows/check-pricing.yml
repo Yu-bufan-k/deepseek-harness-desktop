@@ -1,0 +1,35 @@
+name: Check DeepSeek pricing
+
+on:
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pricing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-pricing.mjs
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync('pricing-check.json', 'utf8'));
+            if (!result.changed) return;
+            const title = 'DeepSeek 官方价格可能已变化';
+            const existing = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'open' });
+            if (existing.data.some(issue => issue.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `每日检测发现官方价格页面与仓库价格清单不一致。\n\n缺失关键值：${result.missing.join(', ')}\n\n来源：${result.source}\n检测时间：${result.checkedAt}\n\n请人工核对后更新 \`pricing/prices.json\`，避免页面结构变化导致错误自动改价。`
+            });

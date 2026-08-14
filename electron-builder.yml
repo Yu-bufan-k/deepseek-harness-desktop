@@ -7,6 +7,7 @@ asarUnpack:
   - node_modules/**
 files:
   - dist/**
+  - pricing/**
   - package.json
   - node_modules/**
 directories:

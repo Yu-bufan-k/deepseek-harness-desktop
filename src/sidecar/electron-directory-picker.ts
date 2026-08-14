@@ -4,13 +4,56 @@ const CLIENT_PLUGIN_ID = "deepseek-harness-desktop-integration";
 const CLIENT_PLUGIN_PATH = "/desktop-integration/client.js";
 const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
   id: ${JSON.stringify(CLIENT_PLUGIN_ID)},
-  factory: () => {
+  factory: (require) => {
     const module = { exports: {} };
     const exports = module.exports;
     const READY = "desktop:harness-integration-ready";
     const OPEN = "desktop:open-workspace";
     const RESULT = "desktop:open-workspace-result";
-    const inject = ["workspaces", "sessions"];
+    const React = require("react");
+    const inject = ["workspaces", "sessions", "slots"];
+    const selectRule = (settings, sample) => [...settings.catalog.rules, ...settings.customRules]
+      .filter((rule) => rule.provider.trim().toLowerCase() === sample.provider.trim().toLowerCase()
+        && rule.model.trim().toLowerCase() === sample.model.trim().toLowerCase()
+        && Date.parse(rule.effectiveFrom) <= sample.time)
+      .sort((a, b) => Number(b.mode !== "official") - Number(a.mode !== "official") || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
+    const ratesAt = (rule, time) => {
+      const clock = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(time);
+      return rule.peakRates && rule.peakWindows?.some((window) => clock >= window.start && clock < window.end) ? rule.peakRates : rule.rates;
+    };
+    const costOf = (rule, sample) => {
+      if (rule.mode === "free") return 0;
+      const rates = ratesAt(rule, sample.time);
+      return (sample.uncachedInputTokens * rates.input + sample.cacheReadTokens * rates.cacheRead
+        + sample.cacheWriteTokens * rates.cacheWrite + sample.outputTokens * rates.output) / 1e6;
+    };
+    const money = (currency, value) => new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
+    function CostLine({ useProjection }) {
+      const usage = useProjection("billingUsage") ?? [];
+      const [settings, setSettings] = React.useState(null);
+      React.useEffect(() => {
+        let alive = true;
+        window.desktop?.getBillingSettings().then((value) => { if (alive) setSettings(value); }).catch(() => {});
+        const dispose = window.desktop?.onBillingChanged((value) => setSettings(value));
+        return () => { alive = false; dispose?.(); };
+      }, []);
+      if (!settings || usage.length === 0) return null;
+      const totals = new Map();
+      let unknown = 0;
+      for (const sample of usage) {
+        const rule = selectRule(settings, sample);
+        if (!rule) { unknown += 1; continue; }
+        totals.set(rule.currency, (totals.get(rule.currency) ?? 0) + costOf(rule, sample));
+      }
+      const summary = [...totals].map(([currency, amount]) => money(currency, amount)).join(" + ");
+      const label = summary ? "预估 " + summary + (unknown ? " · " + unknown + " 笔未计价" : "") : unknown + " 笔未配置单价";
+      return React.createElement("button", {
+        type: "button",
+        title: "费用为本地估算，以供应商账单为准。共 " + usage.length + " 次模型请求。点击打开计费设置。",
+        onClick: () => window.desktop?.openSettings(),
+        style: { border: 0, background: "transparent", color: "inherit", opacity: .75, font: "inherit", cursor: "pointer", padding: "0 4px", whiteSpace: "nowrap" }
+      }, "| " + label);
+    }
     function apply(ctx) {
       let chain = Promise.resolve();
       const respond = (result) => window.postMessage({ type: RESULT, result }, window.location.origin);
@@ -43,6 +86,9 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       };
       window.addEventListener("message", onMessage);
       ctx.effect(() => () => window.removeEventListener("message", onMessage), "desktop workspace launcher");
+      ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({
+        name: "conversation.composer.dock", id: "desktop-billing-cost", order: 10
+      }, CostLine));
       window.postMessage({ type: READY }, window.location.origin);
     }
     exports.apply = apply;
@@ -56,7 +102,7 @@ function injectDesktopClient(html: string): string {
     id: CLIENT_PLUGIN_ID,
     url: CLIENT_PLUGIN_PATH,
     rev: "1",
-    inject: ["workspaces", "sessions"],
+    inject: ["workspaces", "sessions", "slots"],
     immediately: true
   });
   const script = `<script>(function(w){function add(g){if(g&&Array.isArray(g.entries)&&!g.entries.some(function(e){return e.id===${JSON.stringify(CLIENT_PLUGIN_ID)}})){g.entries.push(${row});}}if(w.__DSH_BOOT__){add(w.__DSH_BOOT__);return;}Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,set:function(g){add(g);Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,writable:true,value:g});}});})(window);<\/script>`;

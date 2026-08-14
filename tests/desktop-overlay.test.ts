@@ -29,6 +29,16 @@ describe("writeDesktopOverlay", () => {
     expect(contents).not.toContain("dsh-host-directory-picker-native");
   });
 
+  it("可插入桌面计费插件文件 URL", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "dsh-desktop-billing-"));
+    temporaryDirectories.push(directory);
+    const overlayPath = await writeDesktopOverlay(directory, "D:\\Desktop App\\picker.js", "D:\\Desktop App\\billing\\index.js");
+    const contents = await readFile(overlayPath, "utf8");
+
+    expect(contents).toContain("id: desktop-billing");
+    expect(contents).toContain("file:///D:/Desktop%20App/billing/index.js");
+  });
+
   it("在 Harness 最终配置中禁用 auto 后端并插入桌面后端", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "dsh-desktop-compose-"));
     temporaryDirectories.push(directory);

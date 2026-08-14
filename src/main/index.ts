@@ -13,6 +13,7 @@ import {
   type UpdateChannel,
   type UpdateState
 } from "../shared/contracts.js";
+import type { BillingSettings } from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -23,6 +24,7 @@ import { HarnessThemeStore } from "./harness-theme-store.js";
 import { DirectoryPickerBridge } from "./directory-picker-bridge.js";
 import { writeDesktopOverlay } from "./desktop-overlay.js";
 import { resolveLaunchDirectories } from "./launch-paths.js";
+import { BillingStore } from "./billing-store.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
@@ -39,6 +41,7 @@ let credentials: CredentialStore;
 let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
+let billing: BillingStore;
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
 let startupCompleting = false;
@@ -53,6 +56,7 @@ function preloadPath(): string { return path.join(__dirname, "..", "preload", "i
 function rendererPath(file: string): string { return path.join(__dirname, "..", "renderer", file); }
 function appIconPath(): string { return rendererPath(path.join("assets", "deepseek-mark.png")); }
 function directoryPickerPluginPath(): string { return path.join(__dirname, "..", "sidecar", "electron-directory-picker.js"); }
+function billingPluginPath(): string { return path.join(__dirname, "..", "plugins", "billing", "index.js"); }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function launchArgumentsForPath(filePath: string): string[] {
   return app.isPackaged ? [process.execPath, filePath] : [process.execPath, ".", filePath];
@@ -119,6 +123,13 @@ function broadcastInfo(): void {
   const info = currentInfo();
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(IPC.infoChanged, info);
+  }
+}
+
+function broadcastBilling(): void {
+  const value = billing.get();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(IPC.billingChanged, value);
   }
 }
 
@@ -395,6 +406,7 @@ function registerIpc(): void {
   handle(IPC.restartHarness, () => restartHarness());
   handle(IPC.chooseWorkspace, () => chooseWorkspace());
   handle(IPC.openLogs, async () => { await shell.openPath(app.getPath("logs")); });
+  handle(IPC.openSettings, () => showSettings());
   handle(IPC.checkUpdate, () => updates.check());
   handle(IPC.downloadUpdate, () => updates.download());
   handle(IPC.finishSplashAnimation, () => { resolveSplashAnimation(); });
@@ -422,6 +434,17 @@ function registerIpc(): void {
   handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
   handle(IPC.removeCredential, (_event, name: string) => credentials.remove(name));
+  handle(IPC.getBillingSettings, () => billing.get());
+  handle(IPC.setBillingSettings, async (_event, value: BillingSettings) => {
+    const saved = await billing.save(value);
+    broadcastBilling();
+    return saved;
+  });
+  handle(IPC.checkBillingPrices, async () => {
+    const result = await billing.checkForUpdates();
+    broadcastBilling();
+    return result;
+  });
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
     try { assertTrustedIpc(event); } catch { return; }
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -508,13 +531,16 @@ void app.whenReady().then(async () => {
   watchFile(themeStore.filePath, { interval: 500, persistent: false }, () => syncThemeFromHarness());
   settings = new SettingsStore(userData);
   await settings.load();
+  billing = new BillingStore(settings, app.getAppPath());
+  await billing.load();
   credentials = new CredentialStore(userData);
   updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
   directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);
   const bridgeInfo = await directoryPickerBridge.start();
   const desktopOverlayPath = await writeDesktopOverlay(
     path.join(userData, "desktop-runtime"),
-    directoryPickerPluginPath()
+    directoryPickerPluginPath(),
+    billingPluginPath()
   );
   harness = new HarnessManager({
     dshHome: path.join(userData, "dsh"),
@@ -530,6 +556,7 @@ void app.whenReady().then(async () => {
   });
   updates.on("changed", broadcastInfo);
   registerIpc();
+  if (billing.shouldAutoCheck()) void billing.checkForUpdates().then(broadcastBilling).catch((error) => log.warn("价格清单自动检查失败", error));
   installMenu();
   await queueLaunchDirectories(process.argv, process.cwd());
   for (const filePath of earlyOpenPaths.splice(0)) {
@@ -558,11 +585,11 @@ void app.whenReady().then(async () => {
       let clientExports: { inject?: unknown } | undefined;
       const moduleWindow = {
         __ModuleLoader__: {
-          load: (handoff: { factory: () => { inject?: unknown } }) => { clientExports = handoff.factory(); }
+          load: (handoff: { factory: (require: (id: string) => unknown) => { inject?: unknown } }) => { clientExports = handoff.factory(() => ({})); }
         }
       };
       Function("window", clientSource)(moduleWindow);
-      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions"])) {
+      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions", "slots"])) {
         throw new Error("桌面集成客户端未声明 Harness 服务依赖");
       }
       // Parse the browser bundle without executing it in Node.

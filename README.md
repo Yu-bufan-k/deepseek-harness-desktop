@@ -14,6 +14,8 @@ DeepSeek Harness Desktop 是一个面向 Windows 与 macOS 的 Electron 桌面�
 - 通过操作系统加密能力保存 API 凭据。
 - 支持 Stable、Beta 两个 GitHub Releases 更新通道。
 - 支持浅色、深色和跟随系统，外观设置与 Harness 共用同一份配置。
+- 在会话底部显示按请求时间计算的预估费用，并区分官方路由、第三方路由和不同模型。
+- 内置版本化官方价格、峰谷时段、自定义/免费价格规则，以及自动检查和手动刷新。
 - 构建 Windows x64，以及 macOS Intel、Apple Silicon 安装包。
 
 桌面端当前锁定 DeepSeek Harness `0.1.0-rc.6`。上游仍处于开发预览阶段，可能包含不兼容变更，因此只有经过兼容性验证后，才会随新的桌面版本一起升级。
@@ -68,6 +70,19 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm dist:mac
 开发环境可设置 `GITHUB_REPOSITORY=所有者/仓库名` 以启用更新检查。发布流水线会自动读取 GitHub 仓库信息，并生成更新清单。
 
 未配置更新源的开发构建不会发起网络请求；从菜单选择“应用 → 检查更新”时，会明确提示当前状态。公开发行前应完成 Windows 代码签名及 macOS Developer ID 签名与公证。
+
+## 用量与费用
+
+费用功能读取 Harness 持久化的每次模型请求用量，并按 `供应商路由 + 模型 ID + 请求发生时间` 匹配价格。因此官方 DeepSeek、Fireworks、Hugging Face 等同名模型不会混用单价，切换模型后的历史用量也能分别计算。金额仅为本地估算，最终以服务商账单为准。
+
+应用内置 [DeepSeek 官方价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 当前公布的价格，以及 2026 年 8 月 17 日开始生效的北京时间峰谷价格。设置页支持：
+
+- 每 24 小时自动拉取仓库中的已审核价格清单，或手动点击“立即获取最新价格”。
+- 为任意供应商路由和模型添加自定义价格，或标记为免费/仅统计 Token。
+- 多币种分别展示，不进行未经配置的汇率换算。
+- 未知第三方价格显示“未配置单价”，不会套用 DeepSeek 官方价。
+
+`.github/workflows/check-pricing.yml` 每天检查官方页面的关键价格值。检测到变化时会创建一次去重的 GitHub Issue，维护者核对后更新 `pricing/prices.json`；桌面端随后即可自动或手动获取新清单。公开仓库使用标准 GitHub-hosted runner 时，这类轻量定时任务通常不产生 Actions 费用。
 
 ## 启动过程
 

@@ -9,6 +9,7 @@ const packagingDir = path.join(projectDir, "packaging");
 await rm(stageDir, { recursive: true, force: true });
 await mkdir(stageDir, { recursive: true });
 await cp(path.join(projectDir, "dist"), path.join(stageDir, "dist"), { recursive: true });
+await cp(path.join(projectDir, "pricing"), path.join(stageDir, "pricing"), { recursive: true });
 await cp(path.join(packagingDir, "package.json"), path.join(stageDir, "package.json"));
 await cp(path.join(packagingDir, "package-lock.json"), path.join(stageDir, "package-lock.json"));
 await cp(path.join(projectDir, "README.md"), path.join(stageDir, "README.md"));

@@ -1,3 +1,5 @@
+import type { BillingSettings, BillingUpdateResult } from "./billing.js";
+
 export type HarnessStatus = "starting" | "ready" | "stopping" | "stopped" | "failed";
 
 export interface HarnessInfo {
@@ -46,6 +48,7 @@ export const IPC = {
   restartHarness: "desktop:restart-harness",
   chooseWorkspace: "desktop:choose-workspace",
   openLogs: "desktop:open-logs",
+  openSettings: "desktop:open-settings",
   checkUpdate: "desktop:check-update",
   downloadUpdate: "desktop:download-update",
   installUpdate: "desktop:install-update",
@@ -57,6 +60,10 @@ export const IPC = {
   setCredential: "desktop:set-credential",
   hasCredential: "desktop:has-credential",
   removeCredential: "desktop:remove-credential",
+  getBillingSettings: "desktop:get-billing-settings",
+  setBillingSettings: "desktop:set-billing-settings",
+  checkBillingPrices: "desktop:check-billing-prices",
+  billingChanged: "desktop:billing-changed",
   infoChanged: "desktop:info-changed",
   harnessIntegrationReady: "desktop:harness-integration-ready",
   openWorkspace: "desktop:open-workspace",
@@ -80,6 +87,7 @@ export interface DesktopApi {
   restartHarness(): Promise<HarnessInfo>;
   chooseWorkspace(): Promise<string | null>;
   openLogs(): Promise<void>;
+  openSettings(): Promise<void>;
   checkUpdate(): Promise<UpdateState>;
   downloadUpdate(): Promise<UpdateState>;
   installUpdate(): Promise<void>;
@@ -90,6 +98,10 @@ export interface DesktopApi {
   setCredential(name: string, value: string): Promise<void>;
   hasCredential(name: string): Promise<boolean>;
   removeCredential(name: string): Promise<void>;
+  getBillingSettings(): Promise<BillingSettings>;
+  setBillingSettings(settings: BillingSettings): Promise<BillingSettings>;
+  checkBillingPrices(): Promise<BillingUpdateResult>;
+  onBillingChanged(listener: (settings: BillingSettings) => void): () => void;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;
 }
