@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>用量与费用</title>
+  <link rel="stylesheet" href="harness-theme/base.css">
+  <link rel="stylesheet" href="harness-theme/design-platform.css">
+  <link rel="stylesheet" href="harness-theme/scrollbar.css">
+  <style>
+    * { box-sizing: border-box; }
+    :root { color-scheme: light; }
+    html, body { min-height: 100%; }
+    body { margin: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family); font-size: 14px; }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    main { width: min(860px, calc(100% - 48px)); margin: 0 auto; padding: 34px 0 64px; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+    h1 { margin: 0; font-size: 23px; font-weight: 620; letter-spacing: -.35px; line-height: 32px; }
+    .lead { margin: 6px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
+    .estimate-note { flex: none; margin-top: 3px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 6px 10px; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+    .source-panel { border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+    .source-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 17px 18px; }
+    .eyebrow { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 17px; margin-bottom: 2px; }
+    .source-title { font-weight: 590; line-height: 21px; }
+    .source-meta { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; margin-top: 2px; }
+    .source-actions { display: flex; align-items: center; gap: 12px; }
+    .auto-control { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+    .switch { appearance: none; width: 32px; height: 18px; border: 0; border-radius: 999px; padding: 2px; background: var(--dsw-alias-bg-module-platform); box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2); cursor: pointer; transition: background .16s ease; }
+    .switch::before { content: ""; display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--dsw-alias-label-caption); transition: transform .16s ease, background .16s ease; }
+    .switch:checked { background: var(--dsw-alias-state-business-primary); box-shadow: none; }
+    .switch:checked::before { transform: translateX(14px); background: white; }
+    .source-foot { min-height: 37px; border-top: 1px solid var(--dsw-alias-border-l1); display: flex; align-items: center; gap: 8px; padding: 0 18px; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-label-caption); }
+    .dot.ready { background: var(--dsw-alias-state-success-primary); }
+    .dot.busy { background: var(--dsw-alias-state-business-primary); }
+    .dot.error { background: var(--dsw-alias-state-error-primary); }
+    .section { margin-top: 30px; }
+    .section-heading { min-height: 34px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 11px; }
+    h2 { margin: 0; font-size: 15px; font-weight: 610; line-height: 22px; }
+    .section-copy { margin: 2px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+    .model-list { display: grid; gap: 9px; }
+    .price-card { border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+    .price-head { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+    .model-name { font-weight: 570; line-height: 20px; }
+    .route { margin-top: 1px; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code); font-size: 10px; }
+    .badges { display: flex; gap: 5px; align-items: center; }
+    .badge { border-radius: 999px; padding: 3px 8px; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-tertiary); font-size: 10px; white-space: nowrap; }
+    .badge.current { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent); color: var(--dsw-alias-state-success-primary); }
+    .badge.custom { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent); color: var(--dsw-alias-state-business-primary); }
+    .rate-table { padding: 11px 14px 13px; }
+    .rate-row { display: grid; grid-template-columns: 90px repeat(3, minmax(0, 1fr)); gap: 8px; align-items: baseline; min-height: 31px; }
+    .rate-row + .rate-row { border-top: 1px dashed var(--dsw-alias-border-l1); padding-top: 8px; margin-top: 3px; }
+    .rate-label, .rate-col small { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
+    .rate-col { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+    .rate-col strong { font-size: 14px; font-weight: 570; font-variant-numeric: tabular-nums; }
+    .rate-col small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .empty { min-height: 120px; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 12px; display: grid; place-items: center; text-align: center; color: var(--dsw-alias-label-tertiary); padding: 24px; }
+    .empty strong { display: block; color: var(--dsw-alias-label-secondary); font-weight: 550; margin-bottom: 3px; }
+    .custom-actions { display: flex; align-items: center; gap: 8px; }
+    button { height: 34px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); padding: 0 12px; cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+    button:disabled { opacity: .55; cursor: default; }
+    button.primary { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
+    button.primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+    button.danger { height: 28px; color: var(--dsw-alias-state-error-primary); background: transparent; }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+    dialog { width: min(590px, calc(100% - 32px)); border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px; padding: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+    dialog::backdrop { background: rgba(16, 18, 22, .28); backdrop-filter: blur(2px); }
+    .dialog-head { padding: 19px 21px 15px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+    .dialog-head h2 { font-size: 17px; }
+    .dialog-body { padding: 18px 21px 20px; }
+    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 17px; }
+    .mode-card { position: relative; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 11px 12px; cursor: pointer; }
+    .mode-card:has(input:checked) { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-bg-module-platform); }
+    .mode-card input { position: absolute; opacity: 0; pointer-events: none; }
+    .mode-card strong { display: block; font-size: 13px; font-weight: 570; }
+    .mode-card small { display: block; margin-top: 2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 17px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 12px; }
+    .field { display: grid; gap: 5px; }
+    .field.wide { grid-column: 1 / -1; }
+    .field label { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+    .field input { width: 100%; height: 36px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: inherit; padding: 0 10px; outline: 0; }
+    .field input::placeholder { color: var(--dsw-alias-label-caption); }
+    .price-fields { display: contents; }
+    .form-hint { grid-column: 1 / -1; margin: -2px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 16px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); padding: 9px 13px; box-shadow: 0 8px 30px rgba(0,0,0,.12); opacity: 0; pointer-events: none; transition: opacity .16s ease, transform .16s ease; font-size: 12px; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    @media (max-width: 720px) {
+      main { width: min(100% - 28px, 860px); padding-top: 22px; }
+      .page-header { display: block; }
+      .estimate-note { display: inline-block; margin-top: 12px; }
+      .source-main { grid-template-columns: 1fr; }
+      .source-actions { justify-content: space-between; }
+      .rate-row { grid-template-columns: 72px repeat(3, minmax(0, 1fr)); }
+      .rate-col { display: grid; gap: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="page-header">
+    <div><h1>用量与费用</h1><p class="lead">管理模型价格来源与自定义计费规则。</p></div>
+    <span class="estimate-note">本地估算 · 账单以供应商为准</span>
+  </header>
+
+  <section class="source-panel" aria-labelledby="sourceTitle">
+    <div class="source-main">
+      <div><div class="eyebrow">当前价格策略</div><div class="source-title" id="sourceTitle">官方清单优先，自定义规则覆盖</div><div class="source-meta" id="sourceMeta">正在读取价格清单…</div></div>
+      <div class="source-actions"><label class="auto-control"><input class="switch" id="billingAuto" type="checkbox">自动检查</label><button id="billingRefresh">检查新价格</button></div>
+    </div>
+    <div class="source-foot"><span class="dot" id="statusDot"></span><span id="statusText">准备就绪</span></div>
+  </section>
+
+  <section class="section" aria-labelledby="officialTitle">
+    <div class="section-heading"><div><h2 id="officialTitle">DeepSeek 官方价格</h2><p class="section-copy">按请求发生时间自动匹配当前价、历史价与峰谷时段。</p></div></div>
+    <div class="model-list" id="officialList"></div>
+  </section>
+
+  <section class="section" aria-labelledby="customTitle">
+    <div class="section-heading"><div><h2 id="customTitle">自定义规则</h2><p class="section-copy">用于第三方路由、私有部署或覆盖官方价格。</p></div><div class="custom-actions"><button class="primary" id="openAdd">添加规则</button></div></div>
+    <div class="model-list" id="customList"></div>
+  </section>
+</main>
+
+<dialog id="priceDialog" aria-labelledby="dialogTitle">
+  <form method="dialog" id="priceForm">
+    <div class="dialog-head"><h2 id="dialogTitle">添加价格规则</h2><p class="section-copy">规则从保存时开始生效，不会改变更早请求的计价方式。</p></div>
+    <div class="dialog-body">
+      <div class="mode-grid" role="radiogroup" aria-label="计费方式">
+        <label class="mode-card"><input type="radio" name="priceMode" value="custom" checked><strong>按 Token 计费</strong><small>分别设置输入、缓存命中和输出单价。</small></label>
+        <label class="mode-card"><input type="radio" name="priceMode" value="free"><strong>免费 / 不计金额</strong><small>保留 Token 统计，但费用始终显示为零。</small></label>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label for="priceProvider">供应商路由</label><input id="priceProvider" autocomplete="off" placeholder="例如 deepseek-official"></div>
+        <div class="field"><label for="priceModel">模型 ID</label><input id="priceModel" autocomplete="off" placeholder="例如 deepseek-v4-flash"></div>
+        <div class="price-fields" id="priceFields">
+          <div class="field"><label for="priceCurrency">币种</label><input id="priceCurrency" value="CNY" maxlength="3"></div>
+          <div class="field"><label for="priceInput">未缓存输入</label><input id="priceInput" type="number" min="0" step="any" placeholder="每百万 Token"></div>
+          <div class="field"><label for="priceCache">缓存命中</label><input id="priceCache" type="number" min="0" step="any" placeholder="每百万 Token"></div>
+          <div class="field"><label for="priceOutput">模型输出</label><input id="priceOutput" type="number" min="0" step="any" placeholder="每百万 Token"></div>
+          <p class="form-hint">所有价格均为每百万 Token；缓存写入按未缓存输入单价计算。</p>
+        </div>
+      </div>
+      <div class="dialog-actions"><button value="cancel">取消</button><button type="button" class="primary" id="savePrice">保存规则</button></div>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const systemDark = matchMedia('(prefers-color-scheme: dark)');
+  let billing;
+  let themePreference = 'system';
+  let toastTimer;
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+
+  function applyTheme(preference) {
+    themePreference = preference;
+    const dark = preference === 'dark' || (preference === 'system' && systemDark.matches);
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    document.body.toggleAttribute('data-ds-dark-theme', dark);
+  }
+  systemDark.addEventListener('change', () => { if (themePreference === 'system') applyTheme('system'); });
+  function notify(message) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('show'); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2200); }
+  function setStatus(message, phase = 'ready') { $('statusText').textContent = message; $('statusDot').className = `dot ${phase}`; }
+  function statusOf(rule, allRules) {
+    const now = Date.now(), start = Date.parse(rule.effectiveFrom);
+    if (start > now) return { label: `将于 ${new Date(start).toLocaleDateString()} 生效`, kind: '' };
+    const later = allRules.some((item) => item.provider === rule.provider && item.model === rule.model && Date.parse(item.effectiveFrom) > start && Date.parse(item.effectiveFrom) <= now);
+    return later ? { label: '历史价格', kind: '' } : { label: '当前生效', kind: 'current' };
+  }
+  const rateCell = (value, label) => `<div class="rate-col"><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></div>`;
+  function officialCard(rule, rules) {
+    const card = document.createElement('article'); card.className = 'price-card';
+    const status = statusOf(rule, rules);
+    const rows = rule.peakRates
+      ? `<div class="rate-row"><span class="rate-label">空闲时段</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存')}${rateCell(rule.rates.output, '输出')}</div><div class="rate-row"><span class="rate-label">高峰时段</span>${rateCell(rule.peakRates.input, '输入')}${rateCell(rule.peakRates.cacheRead, '缓存')}${rateCell(rule.peakRates.output, '输出')}</div>`
+      : `<div class="rate-row"><span class="rate-label">标准价格</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存')}${rateCell(rule.rates.output, '输出')}</div>`;
+    card.innerHTML = `<div class="price-head"><div><div class="model-name">${escapeHtml(rule.label)}</div><div class="route">${escapeHtml(rule.provider)} / ${escapeHtml(rule.model)}</div></div><div class="badges"><span class="badge ${status.kind}">${escapeHtml(status.label)}</span><span class="badge">${escapeHtml(rule.currency)} / 百万 Token</span></div></div><div class="rate-table">${rows}</div>`;
+    return card;
+  }
+  function customCard(rule) {
+    const card = document.createElement('article'); card.className = 'price-card';
+    const free = rule.mode === 'free';
+    card.innerHTML = `<div class="price-head"><div><div class="model-name">${escapeHtml(rule.provider)} / ${escapeHtml(rule.model)}</div><div class="route">从 ${escapeHtml(new Date(rule.effectiveFrom).toLocaleString())} 开始覆盖</div></div><div class="badges"><span class="badge custom">${free ? '免费' : '自定义'}</span></div></div>${free ? '' : `<div class="rate-table"><div class="rate-row"><span class="rate-label">${escapeHtml(rule.currency)}</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存')}${rateCell(rule.rates.output, '输出')}</div></div>`}`;
+    const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = '删除';
+    card.querySelector('.badges').append(remove);
+    remove.onclick = async () => { const next = await window.desktop.setBillingSettings({ ...billing, customRules: billing.customRules.filter((item) => item.id !== rule.id) }); render(next); notify('规则已删除'); };
+    return card;
+  }
+  function render(next) {
+    billing = next;
+    $('billingAuto').checked = next.autoUpdate;
+    $('sourceMeta').textContent = `${next.catalog.rules.length} 条官方价格 · ${next.customRules.length} 条自定义覆盖${next.lastCheckedAt ? ` · ${new Date(next.lastCheckedAt).toLocaleString()} 检查` : ' · 尚未联网检查'}`;
+    $('officialList').replaceChildren(...next.catalog.rules.map((rule) => officialCard(rule, next.catalog.rules)));
+    if (next.customRules.length) $('customList').replaceChildren(...next.customRules.map(customCard));
+    else { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>当前没有自定义规则</strong>第三方模型会显示“未配置单价”，直到你添加对应规则。</div>'; $('customList').replaceChildren(empty); }
+  }
+  document.querySelectorAll('input[name="priceMode"]').forEach((radio) => radio.onchange = () => $('priceFields').hidden = radio.value === 'free' && radio.checked);
+  $('openAdd').onclick = () => { $('priceForm').reset(); $('priceCurrency').value = 'CNY'; $('priceFields').hidden = false; $('priceDialog').showModal(); setTimeout(() => $('priceProvider').focus(), 0); };
+  $('billingAuto').onchange = async () => { try { render(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); notify('自动检查设置已保存'); } catch (error) { render(billing); setStatus(error instanceof Error ? error.message : String(error), 'error'); } };
+  $('billingRefresh').onclick = async () => { $('billingRefresh').disabled = true; setStatus('正在检查 DeepSeek 官方价格…', 'busy'); try { const result = await window.desktop.checkBillingPrices(); render(result.settings); setStatus(result.message); } catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); } finally { $('billingRefresh').disabled = false; } };
+  $('savePrice').onclick = async () => {
+    const mode = document.querySelector('input[name="priceMode"]:checked').value;
+    const provider = $('priceProvider').value.trim(), model = $('priceModel').value.trim();
+    if (!provider || !model) { notify('请填写供应商路由和模型 ID'); return; }
+    const number = (id) => mode === 'free' ? 0 : Number($(id).value);
+    const rates = { input: number('priceInput'), cacheRead: number('priceCache'), cacheWrite: number('priceInput'), output: number('priceOutput') };
+    if (Object.values(rates).some((value) => !Number.isFinite(value) || value < 0)) { notify('请填写完整、有效的非负单价'); return; }
+    const rule = { id: `custom-${Date.now()}`, provider, model, label: `${provider}/${model}（自定义）`, currency: $('priceCurrency').value.trim().toUpperCase() || 'CNY', mode, effectiveFrom: new Date().toISOString(), rates };
+    try { render(await window.desktop.setBillingSettings({ ...billing, customRules: [...billing.customRules, rule] })); $('priceDialog').close(); notify('价格规则已保存'); } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+  };
+  window.desktop.onBillingChanged(render);
+  window.desktop.onInfoChanged((info) => applyTheme(info.themePreference));
+  Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings()]).then(([info, settings]) => { applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
+</script>
+</body>
+</html>

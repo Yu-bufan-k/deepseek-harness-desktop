@@ -85,16 +85,6 @@
     select { min-width: 104px; }
     input { min-width: 0; flex: 1 1 210px; outline: none; }
     input::placeholder { color: var(--dsw-alias-label-caption); }
-    input[type="checkbox"] { min-width: auto; flex: none; width: 16px; height: 16px; padding: 0; }
-    .billing-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .billing-toolbar label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; }
-    .price-list { display: grid; gap: 7px; margin-top: 12px; }
-    .price-row { border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; padding: 10px 12px; background: var(--dsw-alias-bg-layer-1); display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 6px 12px; }
-    .price-row small { color: var(--dsw-alias-label-tertiary); grid-column: 1 / -1; line-height: 18px; }
-    .price-row button { height: 28px; padding: 0 9px; }
-    .price-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-    .price-form input, .price-form select { width: 100%; min-width: 0; }
-    .price-form .wide { grid-column: span 2; }
     .status-line { min-height: 24px; display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
     .status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; background: var(--dsw-alias-label-caption); }
     .status-dot[data-phase="ready"], .status-dot[data-phase="available"] { background: var(--dsw-alias-state-success-primary); }
@@ -107,8 +97,6 @@
       .appearance-grid { grid-template-columns: 1fr; }
       .theme-preview { display: none; }
       .info-row { grid-template-columns: 110px minmax(0, 1fr); }
-      .price-form { grid-template-columns: 1fr 1fr; }
-      .price-form .wide { grid-column: span 2; }
     }
   </style>
 </head>
@@ -150,26 +138,6 @@
   </section>
 
   <section class="group">
-    <div class="group-heading"><h2>用量与费用</h2><p class="description">按每次请求的供应商、模型、发生时间和 Token 本地估算；结果不等同于供应商账单。</p></div>
-    <div class="billing-toolbar">
-      <label><input id="billingAuto" type="checkbox"> 每 24 小时自动检查官方价格</label>
-      <button id="billingRefresh">立即获取最新价格</button>
-    </div>
-    <div class="status-line"><span class="status-dot" id="billingDot"></span><span id="billingStatus">正在读取价格…</span></div>
-    <div id="priceList" class="price-list"></div>
-    <div class="price-form" aria-label="添加自定义价格">
-      <input id="priceProvider" placeholder="供应商路由，例如 deepseek-official">
-      <input id="priceModel" class="wide" placeholder="模型 ID，例如 deepseek-v4-flash">
-      <select id="priceMode"><option value="custom">自定义计费</option><option value="free">免费 / 仅统计 Token</option></select>
-      <input id="priceCurrency" placeholder="币种，例如 CNY" value="CNY">
-      <input id="priceInput" type="number" min="0" step="any" placeholder="未缓存输入 / 百万 Token">
-      <input id="priceCache" type="number" min="0" step="any" placeholder="缓存命中 / 百万 Token">
-      <input id="priceOutput" type="number" min="0" step="any" placeholder="输出 / 百万 Token">
-      <button id="addPrice" class="primary">添加价格规则</button>
-    </div>
-  </section>
-
-  <section class="group">
     <div class="group-heading"><h2>系统凭据</h2><p class="description">凭据由操作系统加密保存，不会显示或写入日志。</p></div>
     <div class="actions"><input id="credentialName" aria-label="凭据名称" placeholder="DEEPSEEK_API_KEY"><input id="credentialValue" aria-label="凭据值" type="password" placeholder="API Key"><button id="saveCredential" class="primary">保存</button><button id="removeCredential">移除</button></div>
   </section>
@@ -179,7 +147,6 @@
   const $ = (id) => document.getElementById(id);
   const systemDark = matchMedia('(prefers-color-scheme: dark)');
   let info;
-  let billing;
   function applyTheme(preference) {
     const dark = preference === 'dark' || (preference === 'system' && systemDark.matches);
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
@@ -218,23 +185,6 @@
       $('message').textContent = error instanceof Error ? error.message : String(error);
     }
   }
-  const rateText = (rule) => rule.mode === 'free' ? '免费' : `${rule.currency} / 百万 Token：输入 ${rule.rates.input} · 缓存 ${rule.rates.cacheRead} · 输出 ${rule.rates.output}${rule.peakRates ? ' · 含峰谷价' : ''}`;
-  function renderBilling(next) {
-    billing = next;
-    $('billingAuto').checked = next.autoUpdate;
-    $('billingStatus').textContent = `${next.catalog.rules.length} 条官方规则 · ${next.customRules.length} 条自定义规则${next.lastCheckedAt ? ` · 上次检查 ${new Date(next.lastCheckedAt).toLocaleString()}` : ''}`;
-    $('billingDot').dataset.phase = 'ready';
-    const rules = [...next.catalog.rules.map((rule) => ({ ...rule, builtin: true })), ...next.customRules.map((rule) => ({ ...rule, builtin: false }))];
-    $('priceList').replaceChildren(...rules.map((rule) => {
-      const row = document.createElement('div'); row.className = 'price-row';
-      const title = document.createElement('span'); title.textContent = `${rule.label} · ${rule.provider}/${rule.model}`;
-      const action = document.createElement(rule.builtin ? 'span' : 'button');
-      action.textContent = rule.builtin ? '官方' : '删除';
-      if (!rule.builtin) action.onclick = () => act(async () => { await window.desktop.setBillingSettings({ ...billing, customRules: billing.customRules.filter((item) => item.id !== rule.id) }); }, '自定义价格已删除');
-      const detail = document.createElement('small'); detail.textContent = `${rateText(rule)} · 生效 ${new Date(rule.effectiveFrom).toLocaleString()}`;
-      row.append(title, action, detail); return row;
-    }));
-  }
   document.querySelectorAll('.theme-card').forEach((card) => card.onclick = () => act(() => window.desktop.setThemePreference(card.dataset.theme), `外观已切换为“${card.querySelector('.theme-label span').textContent}”`));
   $('chooseWorkspace').onclick = () => act(() => window.desktop.chooseWorkspace(), '工作区已更新');
   $('restart').onclick = () => act(() => window.desktop.restartHarness(), 'Harness 已重启');
@@ -243,24 +193,10 @@
   $('download').onclick = () => act(() => window.desktop.downloadUpdate(), '下载完成');
   $('install').onclick = () => act(() => window.desktop.installUpdate(), '正在安装');
   $('channel').onchange = () => act(() => window.desktop.setUpdateChannel($('channel').value), '更新通道已修改');
-  $('billingAuto').onchange = () => act(async () => { renderBilling(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); }, '价格自动检查设置已保存');
-  $('billingRefresh').onclick = () => act(async () => { const result = await window.desktop.checkBillingPrices(); renderBilling(result.settings); }, '官方价格检查完成');
-  $('addPrice').onclick = () => act(async () => {
-    const mode = $('priceMode').value;
-    const number = (id) => mode === 'free' ? 0 : Number($(id).value);
-    const provider = $('priceProvider').value.trim(), model = $('priceModel').value.trim();
-    if (!provider || !model) throw new Error('请填写供应商和模型 ID');
-    const rates = { input: number('priceInput'), cacheRead: number('priceCache'), cacheWrite: number('priceInput'), output: number('priceOutput') };
-    if (Object.values(rates).some((value) => !Number.isFinite(value) || value < 0)) throw new Error('请填写有效的非负单价');
-    const rule = { id: `custom-${Date.now()}`, provider, model, label: `${provider}/${model}（自定义）`, currency: $('priceCurrency').value.trim().toUpperCase() || 'CNY', mode, effectiveFrom: new Date().toISOString(), rates };
-    renderBilling(await window.desktop.setBillingSettings({ ...billing, customRules: [...billing.customRules, rule] }));
-  }, '自定义价格已添加');
   $('saveCredential').onclick = () => act(async () => { await window.desktop.setCredential($('credentialName').value, $('credentialValue').value); $('credentialValue').value = ''; await window.desktop.restartHarness(); }, '凭据已安全保存并重启 Harness');
   $('removeCredential').onclick = () => act(async () => { await window.desktop.removeCredential($('credentialName').value); await window.desktop.restartHarness(); }, '凭据已移除');
   window.desktop.onInfoChanged(render);
-  window.desktop.onBillingChanged(renderBilling);
   window.desktop.getInfo().then(render);
-  window.desktop.getBillingSettings().then(renderBilling);
 </script>
 </body>
 </html>

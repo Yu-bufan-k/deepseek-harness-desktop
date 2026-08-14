@@ -49,6 +49,7 @@ export const IPC = {
   chooseWorkspace: "desktop:choose-workspace",
   openLogs: "desktop:open-logs",
   openSettings: "desktop:open-settings",
+  openBilling: "desktop:open-billing",
   checkUpdate: "desktop:check-update",
   downloadUpdate: "desktop:download-update",
   installUpdate: "desktop:install-update",
@@ -88,6 +89,7 @@ export interface DesktopApi {
   chooseWorkspace(): Promise<string | null>;
   openLogs(): Promise<void>;
   openSettings(): Promise<void>;
+  openBilling(): Promise<void>;
   checkUpdate(): Promise<UpdateState>;
   downloadUpdate(): Promise<UpdateState>;
   installUpdate(): Promise<void>;

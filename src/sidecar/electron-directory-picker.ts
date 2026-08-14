@@ -28,31 +28,65 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         + sample.cacheWriteTokens * rates.cacheWrite + sample.outputTokens * rates.output) / 1e6;
     };
     const money = (currency, value) => new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
-    function CostLine({ useProjection }) {
+    const compactTokens = (value) => value >= 1e6 ? (value / 1e6).toFixed(1) + "M" : value >= 1e3 ? (value / 1e3).toFixed(value >= 1e4 ? 0 : 1) + "K" : String(value);
+    function UsageMeter({ useProjection }) {
       const usage = useProjection("billingUsage") ?? [];
       const [settings, setSettings] = React.useState(null);
+      const [open, setOpen] = React.useState(false);
+      const rootRef = React.useRef(null);
       React.useEffect(() => {
         let alive = true;
         window.desktop?.getBillingSettings().then((value) => { if (alive) setSettings(value); }).catch(() => {});
         const dispose = window.desktop?.onBillingChanged((value) => setSettings(value));
         return () => { alive = false; dispose?.(); };
       }, []);
-      if (!settings || usage.length === 0) return null;
+      React.useEffect(() => {
+        if (!open) return;
+        const close = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+        const escape = (event) => { if (event.key === "Escape") setOpen(false); };
+        document.addEventListener("pointerdown", close);
+        document.addEventListener("keydown", escape);
+        return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+      }, [open]);
+      if (!settings) return null;
       const totals = new Map();
       let unknown = 0;
+      let inputTokens = 0;
+      let outputTokens = 0;
       for (const sample of usage) {
+        inputTokens += sample.uncachedInputTokens + sample.cacheReadTokens + sample.cacheWriteTokens;
+        outputTokens += sample.outputTokens;
         const rule = selectRule(settings, sample);
         if (!rule) { unknown += 1; continue; }
         totals.set(rule.currency, (totals.get(rule.currency) ?? 0) + costOf(rule, sample));
       }
       const summary = [...totals].map(([currency, amount]) => money(currency, amount)).join(" + ");
-      const label = summary ? "预估 " + summary + (unknown ? " · " + unknown + " 笔未计价" : "") : unknown + " 笔未配置单价";
-      return React.createElement("button", {
-        type: "button",
-        title: "费用为本地估算，以供应商账单为准。共 " + usage.length + " 次模型请求。点击打开计费设置。",
-        onClick: () => window.desktop?.openSettings(),
-        style: { border: 0, background: "transparent", color: "inherit", opacity: .75, font: "inherit", cursor: "pointer", padding: "0 4px", whiteSpace: "nowrap" }
-      }, "| " + label);
+      const label = summary || (unknown ? "未计价" : "¥0.0000");
+      const last = usage[usage.length - 1];
+      const lastRule = last ? selectRule(settings, last) : null;
+      const h = React.createElement;
+      const amountRows = [...totals].map(([currency, amount]) => h("div", { className: "dsh-cost-total", key: currency }, h("span", null, currency + " 预估"), h("strong", null, money(currency, amount))));
+      if (!amountRows.length) amountRows.push(h("div", { className: "dsh-cost-total", key: "empty" }, h("span", null, "本会话预估"), h("strong", null, unknown ? "未配置单价" : "¥0.0000")));
+      return h("div", { className: "dsh-cost-meter", ref: rootRef },
+        h("button", { type: "button", className: "dsh-cost-trigger", "aria-expanded": open, onClick: () => setOpen(!open) },
+          h("span", { className: "dsh-cost-symbol", "aria-hidden": "true" }, "¥"),
+          h("span", { className: "dsh-cost-label" }, "本会话 " + label),
+          h("span", { className: "dsh-cost-chevron", "aria-hidden": "true" }, open ? "▴" : "▾")
+        ),
+        open && h("div", { className: "dsh-cost-popover", role: "dialog", "aria-label": "本会话用量与费用" },
+          h("div", { className: "dsh-cost-heading" }, h("div", null, h("strong", null, "本会话用量"), h("small", null, "本地估算，以供应商账单为准"))),
+          h("div", { className: "dsh-cost-totals" }, amountRows),
+          h("div", { className: "dsh-cost-facts" },
+            h("div", null, h("span", null, "模型请求"), h("strong", null, String(usage.length) + " 次")),
+            h("div", null, h("span", null, "输入 Token"), h("strong", null, compactTokens(inputTokens))),
+            h("div", null, h("span", null, "输出 Token"), h("strong", null, compactTokens(outputTokens))),
+            h("div", null, h("span", null, "当前模型"), h("strong", { title: last ? last.provider + "/" + last.model : "" }, last ? last.model : "—"))
+          ),
+          unknown > 0 && h("div", { className: "dsh-cost-warning" }, unknown + " 次请求未配置价格，不计入金额。"),
+          last && !lastRule && h("div", { className: "dsh-cost-route" }, last.provider + " / " + last.model),
+          h("button", { type: "button", className: "dsh-cost-manage", onClick: () => window.desktop?.openBilling() }, "管理价格与规则")
+        )
+      );
     }
     function apply(ctx) {
       let chain = Promise.resolve();
@@ -86,9 +120,14 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       };
       window.addEventListener("message", onMessage);
       ctx.effect(() => () => window.removeEventListener("message", onMessage), "desktop workspace launcher");
-      ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({
-        name: "conversation.composer.dock", id: "desktop-billing-cost", order: 10
-      }, CostLine));
+      const style = document.createElement("style");
+      style.id = "deepseek-desktop-billing-styles";
+      style.textContent = ".dsh-cost-meter{position:relative;display:inline-flex;align-items:center}.dsh-cost-trigger{height:32px;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);padding:0 11px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}.dsh-cost-trigger:hover,.dsh-cost-trigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.dsh-cost-symbol{width:18px;height:18px;display:grid;place-items:center;border-radius:50%;background:var(--dsw-alias-bg-module-platform);font-size:11px;font-weight:650;color:var(--dsw-alias-state-business-primary)}.dsh-cost-chevron{font-size:9px;color:var(--dsw-alias-label-tertiary)}.dsh-cost-popover{position:absolute;z-index:1000;right:0;top:calc(100% + 9px);width:318px;border:1px solid var(--dsw-alias-border-l2);border-radius:13px;background:var(--dsw-alias-bg-base);box-shadow:0 14px 42px rgba(0,0,0,.16);padding:14px;color:var(--dsw-alias-label-primary)}.dsh-cost-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.dsh-cost-heading strong{display:block;font-size:13px;font-weight:610}.dsh-cost-heading small{display:block;color:var(--dsw-alias-label-tertiary);font-size:10px;margin-top:2px}.dsh-cost-totals{display:grid;gap:5px;padding:10px 11px;border-radius:9px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1)}.dsh-cost-total{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.dsh-cost-total span{color:var(--dsw-alias-label-tertiary);font-size:11px}.dsh-cost-total strong{font-size:16px;font-weight:620;font-variant-numeric:tabular-nums}.dsh-cost-facts{display:grid;grid-template-columns:1fr 1fr;gap:9px 14px;padding:13px 2px}.dsh-cost-facts div{min-width:0}.dsh-cost-facts span{display:block;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-cost-facts strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:550;margin-top:2px}.dsh-cost-warning{border-top:1px solid var(--dsw-alias-border-l1);padding:9px 2px;color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-tertiary));font-size:10px;line-height:16px}.dsh-cost-route{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code);font-size:9px;margin:-4px 2px 9px}.dsh-cost-manage{width:100%;height:32px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;cursor:pointer}.dsh-cost-manage:hover{background:var(--dsw-alias-interactive-bg-hover)}@media(max-width:900px){.dsh-cost-trigger{width:32px;padding:0;justify-content:center}.dsh-cost-label,.dsh-cost-chevron{display:none}.dsh-cost-symbol{background:transparent}.dsh-cost-popover{position:fixed;right:12px;top:58px;width:min(318px,calc(100vw - 24px))}}";
+      document.head.appendChild(style);
+      ctx.effect(() => () => style.remove(), "desktop billing styles");
+      ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
+        name: "conversation.session.header.utilities", id: "desktop-billing-cost", order: -10
+      }, UsageMeter));
       window.postMessage({ type: READY }, window.location.origin);
     }
     exports.apply = apply;

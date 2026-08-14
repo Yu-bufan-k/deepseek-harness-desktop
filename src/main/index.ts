@@ -34,6 +34,7 @@ const integrationReadyWindows = new WeakSet<BrowserWindow>();
 const pendingWorkspaceOpens = new Map<string, OpenWorkspaceRequest & { sentTo: number | null }>();
 const earlyOpenPaths: string[] = [];
 let settingsWindow: BrowserWindow | null = null;
+let billingWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let harness: HarnessManager;
 let settings: SettingsStore;
@@ -135,7 +136,7 @@ function broadcastBilling(): void {
 
 function secureWindow(window: BrowserWindow, harnessOrigin?: string): void {
   const allowNavigation = (target: string): boolean => {
-    if (target.startsWith("file://") && (target.includes("/settings.html") || target.includes("/splash.html"))) return true;
+    if (target.startsWith("file://") && (target.includes("/settings.html") || target.includes("/billing.html") || target.includes("/splash.html"))) return true;
     if (!harnessOrigin) return false;
     try { return new URL(target).origin === harnessOrigin; } catch { return false; }
   };
@@ -280,6 +281,31 @@ async function showSettings(): Promise<void> {
   await settingsWindow.loadFile(rendererPath("settings.html"));
 }
 
+async function showBilling(): Promise<void> {
+  if (billingWindow && !billingWindow.isDestroyed()) {
+    billingWindow.show();
+    billingWindow.focus();
+    return;
+  }
+  billingWindow = new BrowserWindow({
+    width: 940,
+    height: 800,
+    minWidth: 720,
+    minHeight: 620,
+    icon: appIconPath(),
+    title: `${PRODUCT_NAME} 用量与费用`,
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  secureWindow(billingWindow);
+  billingWindow.on("closed", () => { billingWindow = null; });
+  await billingWindow.loadFile(rendererPath("billing.html"));
+}
+
 async function showUpdateResult(state: UpdateState): Promise<void> {
   if (!state.configured) {
     await dialog.showMessageBox({
@@ -338,6 +364,7 @@ function installMenu(): void {
       label: "应用",
       submenu: [
         { label: "设置…", accelerator: "CmdOrCtrl+,", click: () => void showSettings() },
+        { label: "用量与费用…", accelerator: "CmdOrCtrl+Shift+U", click: () => void showBilling() },
         { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
         { type: "separator" },
         { role: "toggleDevTools", label: "开发者工具" }
@@ -390,7 +417,7 @@ async function restartHarness(): Promise<HarnessInfo> {
 
 function assertTrustedIpc(event: IpcMainInvokeEvent): void {
   const sender = event.senderFrame?.url ?? "";
-  let trusted = sender.startsWith("file://") && (sender.includes("/settings.html") || sender.includes("/splash.html"));
+  let trusted = sender.startsWith("file://") && (sender.includes("/settings.html") || sender.includes("/billing.html") || sender.includes("/splash.html"));
   try {
     const url = new URL(sender);
     trusted ||= url.hostname === "127.0.0.1" && url.protocol === "http:";
@@ -407,6 +434,7 @@ function registerIpc(): void {
   handle(IPC.chooseWorkspace, () => chooseWorkspace());
   handle(IPC.openLogs, async () => { await shell.openPath(app.getPath("logs")); });
   handle(IPC.openSettings, () => showSettings());
+  handle(IPC.openBilling, () => showBilling());
   handle(IPC.checkUpdate, () => updates.check());
   handle(IPC.downloadUpdate, () => updates.download());
   handle(IPC.finishSplashAnimation, () => { resolveSplashAnimation(); });
@@ -581,6 +609,9 @@ void app.whenReady().then(async () => {
       const clientSource = await fetch(`http://127.0.0.1:${started.port}/desktop-integration/client.js`).then((response) => response.text());
       if (!clientSource.includes("desktop:open-workspace")) {
         throw new Error("桌面集成客户端路由不可用");
+      }
+      if (!clientSource.includes("conversation.session.header.utilities") || !clientSource.includes("openBilling")) {
+        throw new Error("右上角用量与费用入口不可用");
       }
       let clientExports: { inject?: unknown } | undefined;
       const moduleWindow = {

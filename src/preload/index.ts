@@ -30,6 +30,7 @@ const api: DesktopApi = {
   chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
   openSettings: () => ipcRenderer.invoke(IPC.openSettings),
+  openBilling: () => ipcRenderer.invoke(IPC.openBilling),
   checkUpdate: () => ipcRenderer.invoke(IPC.checkUpdate),
   downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
   installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
