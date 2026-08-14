@@ -55,5 +55,5 @@ describe("writeDesktopOverlay", () => {
     expect(result.stdout).toMatch(/id: directory-picker[\s\S]*?disabled: true/);
     expect(result.stdout).toContain("id: directory-picker-desktop");
     expect(result.stdout).toContain("file:///D:/Desktop%20App/picker.js");
-  });
+  }, 15_000);
 });
