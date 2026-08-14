@@ -11,7 +11,7 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
     const OPEN = "desktop:open-workspace";
     const RESULT = "desktop:open-workspace-result";
     const React = require("react");
-    const inject = ["workspaces", "sessions", "slots"];
+    const inject = ["workspaces", "sessions", "slots", "modelDirectories"];
     const selectRule = (settings, sample) => [...settings.catalog.rules, ...settings.customRules]
       .filter((rule) => rule.provider.trim().toLowerCase() === sample.provider.trim().toLowerCase()
         && rule.model.trim().toLowerCase() === sample.model.trim().toLowerCase()
@@ -29,8 +29,16 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
     };
     const money = (currency, value) => new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
     const compactTokens = (value) => value >= 1e6 ? (value / 1e6).toFixed(1) + "M" : value >= 1e3 ? (value / 1e3).toFixed(value >= 1e4 ? 0 : 1) + "K" : String(value);
-    function UsageMeter({ useProjection }) {
+    function UsageMeter({ useProjection, modelDirectory, sessionsList, sessionId }) {
       const usage = useProjection("billingUsage") ?? [];
+      const modelState = React.useSyncExternalStore(
+        (listener) => modelDirectory.subscribe(listener),
+        () => modelDirectory.getSnapshot()
+      );
+      const sessionsState = React.useSyncExternalStore(
+        (listener) => sessionsList.subscribe(listener),
+        () => sessionsList.getSnapshot()
+      );
       const [settings, setSettings] = React.useState(null);
       const [wide, setWide] = React.useState(false);
       const [open, setOpen] = React.useState(false);
@@ -42,6 +50,21 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         const dispose = window.desktop?.onBillingChanged((value) => setSettings(value));
         return () => { alive = false; dispose?.(); };
       }, []);
+      React.useEffect(() => {
+        const sessions = (sessionsState.ids ?? []).map((id) => {
+          const summary = sessionsState.byId?.[id] ?? {};
+          const projected = summary.projectionValues?.billingUsage;
+          return {
+            sessionId: id,
+            title: summary.displayTitle || summary.title || "未命名对话",
+            samples: id === sessionId ? usage : (Array.isArray(projected) ? projected : [])
+          };
+        });
+        if (sessionId && !sessions.some((session) => session.sessionId === sessionId)) {
+          sessions.push({ sessionId, title: "当前对话", samples: usage });
+        }
+        window.desktop?.reportBillingUsage({ updatedAt: new Date().toISOString(), sessions }).catch(() => {});
+      }, [sessionsState, sessionId, usage]);
       React.useEffect(() => {
         let frame = 0;
         let lastFit = null;
@@ -116,8 +139,11 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       }
       const summary = [...totals].map(([currency, amount]) => money(currency, amount)).join(" + ");
       const label = summary || (unknown ? "未计价" : "¥0.0000");
-      const last = usage[usage.length - 1];
-      const currentKey = last ? JSON.stringify([last.provider, last.model]) : null;
+      const selected = modelState?.current;
+      const currentKey = selected?.provider && selected?.model ? JSON.stringify([selected.provider, selected.model]) : null;
+      if (currentKey && !models.has(currentKey)) {
+        models.set(currentKey, { key: currentKey, provider: selected.provider, model: selected.model, requests: 0, input: 0, cache: 0, output: 0, unknown: 0, totals: new Map() });
+      }
       const current = currentKey ? models.get(currentKey) : null;
       const previous = [...models.values()].filter((model) => model.key !== currentKey).reverse();
       const orderedModels = current ? [current, ...previous] : previous;
@@ -203,7 +229,12 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       document.head.appendChild(style);
       ctx.effect(() => () => style.remove(), "desktop billing styles");
       ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
-        name: "conversation.session.header.utilities", id: "desktop-billing-cost", order: -10
+        name: "conversation.session.header.utilities", id: "desktop-billing-cost", order: -10,
+        inject: (sessionId) => ({
+          sessionId,
+          modelDirectory: ctx.modelDirectories.directoryFor(sessionId).store,
+          sessionsList: ctx.sessions.list
+        })
       }, UsageMeter));
       window.postMessage({ type: READY }, window.location.origin);
     }
@@ -218,7 +249,7 @@ function injectDesktopClient(html: string): string {
     id: CLIENT_PLUGIN_ID,
     url: CLIENT_PLUGIN_PATH,
     rev: "1",
-    inject: ["workspaces", "sessions", "slots"],
+    inject: ["workspaces", "sessions", "slots", "modelDirectories"],
     immediately: true
   });
   const script = `<script>(function(w){function add(g){if(g&&Array.isArray(g.entries)&&!g.entries.some(function(e){return e.id===${JSON.stringify(CLIENT_PLUGIN_ID)}})){g.entries.push(${row});}}if(w.__DSH_BOOT__){add(w.__DSH_BOOT__);return;}Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,set:function(g){add(g);Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,writable:true,value:g});}});})(window);<\/script>`;

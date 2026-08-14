@@ -1,4 +1,4 @@
-import type { BillingSettings, BillingUpdateResult } from "./billing.js";
+import type { BillingSettings, BillingUpdateResult, BillingUsageIndex } from "./billing.js";
 
 export type HarnessStatus = "starting" | "ready" | "stopping" | "stopped" | "failed";
 
@@ -65,6 +65,9 @@ export const IPC = {
   setBillingSettings: "desktop:set-billing-settings",
   checkBillingPrices: "desktop:check-billing-prices",
   billingChanged: "desktop:billing-changed",
+  reportBillingUsage: "desktop:report-billing-usage",
+  getBillingUsage: "desktop:get-billing-usage",
+  billingUsageChanged: "desktop:billing-usage-changed",
   infoChanged: "desktop:info-changed",
   harnessIntegrationReady: "desktop:harness-integration-ready",
   openWorkspace: "desktop:open-workspace",
@@ -103,6 +106,9 @@ export interface DesktopApi {
   getBillingSettings(): Promise<BillingSettings>;
   setBillingSettings(settings: BillingSettings): Promise<BillingSettings>;
   checkBillingPrices(): Promise<BillingUpdateResult>;
+  reportBillingUsage(index: BillingUsageIndex): Promise<void>;
+  getBillingUsage(): Promise<BillingUsageIndex>;
+  onBillingUsageChanged(listener: (index: BillingUsageIndex) => void): () => void;
   onBillingChanged(listener: (settings: BillingSettings) => void): () => void;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;

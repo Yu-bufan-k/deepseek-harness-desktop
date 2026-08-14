@@ -20,6 +20,31 @@
     h1 { margin: 0; font-size: 23px; font-weight: 620; letter-spacing: -.35px; line-height: 32px; }
     .lead { margin: 6px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
     .estimate-note { flex: none; margin-top: 3px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 6px 10px; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+    .tabs { display: flex; gap: 4px; width: fit-content; margin: -8px 0 22px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+    .tab { height: 30px; border: 0; border-radius: 7px; padding: 0 14px; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+    .tab[aria-selected="true"] { background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    [hidden] { display: none !important; }
+    .usage-hero { display: grid; grid-template-columns: minmax(0,1.4fr) repeat(3,minmax(100px,.6fr)); border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+    .usage-primary,.usage-stat { min-height: 104px; display: flex; flex-direction: column; justify-content: center; padding: 18px; }
+    .usage-stat { border-left: 1px solid var(--dsw-alias-border-l1); }
+    .usage-label { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+    .usage-amount { margin-top: 5px; font-size: 25px; font-weight: 640; letter-spacing: -.4px; font-variant-numeric: tabular-nums; }
+    .usage-value { margin-top: 5px; font-size: 16px; font-weight: 590; font-variant-numeric: tabular-nums; }
+    .usage-updated { margin-top: 7px; color: var(--dsw-alias-label-caption); font-size: 10px; }
+    .session-list { display: grid; gap: 8px; }
+    .session-card { border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+    .session-card summary { min-height: 58px; display: grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:10px 14px; cursor:pointer; list-style:none; }
+    .session-card summary::-webkit-details-marker { display:none; }
+    .session-card summary:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    .session-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:570; }
+    .session-meta { margin-top:2px; color:var(--dsw-alias-label-tertiary); font-size:10px; }
+    .session-total { text-align:right; font-weight:610; font-variant-numeric:tabular-nums; }
+    .session-models { border-top:1px solid var(--dsw-alias-border-l1); padding:5px 14px 9px; }
+    .session-model { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:8px 0; }
+    .session-model + .session-model { border-top:1px dashed var(--dsw-alias-border-l1); }
+    .session-model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--ds-font-family-code); font-size:11px; }
+    .session-model-meta { margin-top:2px; color:var(--dsw-alias-label-tertiary); font-size:10px; }
+    .unknown-note { color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-tertiary)); }
     .source-panel { border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
     .source-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 17px 18px; }
     .eyebrow { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 17px; margin-bottom: 2px; }
@@ -96,6 +121,10 @@
       .source-actions { justify-content: space-between; }
       .rate-row { grid-template-columns: 72px repeat(3, minmax(0, 1fr)); }
       .rate-col { display: grid; gap: 0; }
+      .usage-hero { grid-template-columns:1fr 1fr; }
+      .usage-primary { grid-column:1/-1; }
+      .usage-stat { border-top:1px solid var(--dsw-alias-border-l1); }
+      .usage-stat:nth-of-type(3) { border-left:0; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
   </style>
@@ -103,13 +132,30 @@
 <body>
 <main>
   <header class="page-header">
-    <div><h1>用量与费用</h1><p class="lead">管理模型价格来源与自定义计费规则。</p></div>
+    <div><h1>用量与费用</h1><p class="lead">查看全部对话的本地用量账本，并管理模型计费规则。</p></div>
     <span class="estimate-note">本地估算 · 账单以供应商为准</span>
   </header>
 
+  <nav class="tabs" aria-label="用量与费用页面"><button class="tab" id="usageTab" aria-selected="true">用量总览</button><button class="tab" id="pricesTab" aria-selected="false">价格规则</button></nav>
+
+  <div id="usageView">
+    <section class="usage-hero" aria-label="全部对话用量汇总">
+      <div class="usage-primary"><span class="usage-label">全部对话预估费用</span><strong class="usage-amount" id="usageTotal">¥0.0000</strong><span class="usage-updated" id="usageUpdated">等待同步对话数据</span></div>
+      <div class="usage-stat"><span class="usage-label">请求</span><strong class="usage-value" id="usageRequests">0</strong></div>
+      <div class="usage-stat"><span class="usage-label">输入 Token</span><strong class="usage-value" id="usageInput">0</strong></div>
+      <div class="usage-stat"><span class="usage-label">输出 Token</span><strong class="usage-value" id="usageOutput">0</strong></div>
+    </section>
+    <section class="section" aria-labelledby="sessionsTitle">
+      <div class="section-heading"><div><h2 id="sessionsTitle">对话明细</h2><p class="section-copy">展开对话可查看其中每个模型的请求、Token 与费用。</p></div></div>
+      <div class="session-list" id="sessionUsageList"></div>
+    </section>
+  </div>
+
+  <div id="pricesView" hidden>
+
   <section class="source-panel" aria-labelledby="sourceTitle">
     <div class="source-main">
-      <div><div class="eyebrow">当前价格策略</div><div class="source-title" id="sourceTitle">官方清单优先，自定义规则覆盖</div><div class="source-meta" id="sourceMeta">正在读取价格清单…</div></div>
+      <div><div class="eyebrow">当前价格策略</div><div class="source-title" id="sourceTitle">受审核清单优先，自定义规则覆盖</div><div class="source-meta" id="sourceMeta">正在读取价格清单…</div></div>
       <div class="source-actions"><label class="auto-control"><input class="switch" id="billingAuto" type="checkbox">自动检查</label><button id="billingRefresh">检查新价格</button></div>
     </div>
     <div class="source-foot"><span class="dot" id="statusDot"></span><span id="statusText">准备就绪</span></div>
@@ -124,6 +170,7 @@
     <div class="section-heading"><div><h2 id="customTitle">自定义规则</h2><p class="section-copy">用于第三方路由、私有部署或覆盖官方价格。</p></div><div class="custom-actions"><button class="primary" id="openAdd">添加规则</button></div></div>
     <div class="model-list" id="customList"></div>
   </section>
+  </div>
 </main>
 
 <dialog id="priceDialog" aria-labelledby="dialogTitle">
@@ -155,6 +202,7 @@
   const $ = (id) => document.getElementById(id);
   const systemDark = matchMedia('(prefers-color-scheme: dark)');
   let billing;
+  let usageIndex = { updatedAt: '', sessions: [] };
   let themePreference = 'system';
   let toastTimer;
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -173,6 +221,50 @@
     if (start > now) return { label: `将于 ${new Date(start).toLocaleDateString()} 生效`, kind: '' };
     const later = allRules.some((item) => item.provider === rule.provider && item.model === rule.model && Date.parse(item.effectiveFrom) > start && Date.parse(item.effectiveFrom) <= now);
     return later ? { label: '历史价格', kind: '' } : { label: '当前生效', kind: 'current' };
+  }
+  const compactTokens = (value) => value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(value >= 1e4 ? 0 : 1)}K` : String(value);
+  const money = (currency, value) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency, minimumFractionDigits: value < .01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
+  function selectRule(sample) {
+    const normalize = (value) => value.trim().toLowerCase();
+    return [...billing.catalog.rules, ...billing.customRules]
+      .filter((rule) => normalize(rule.provider) === normalize(sample.provider) && normalize(rule.model) === normalize(sample.model) && Date.parse(rule.effectiveFrom) <= sample.time)
+      .sort((a, b) => Number(b.mode !== 'official') - Number(a.mode !== 'official') || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
+  }
+  function costOf(rule, sample) {
+    if (rule.mode === 'free') return 0;
+    const clock = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(sample.time);
+    const rates = rule.peakRates && rule.peakWindows?.some(({ start, end }) => clock >= start && clock < end) ? rule.peakRates : rule.rates;
+    return (sample.uncachedInputTokens * rates.input + sample.cacheReadTokens * rates.cacheRead + sample.cacheWriteTokens * rates.cacheWrite + sample.outputTokens * rates.output) / 1e6;
+  }
+  function summarize(samples) {
+    const result = { requests: 0, input: 0, output: 0, unknown: 0, totals: new Map(), models: new Map() };
+    for (const sample of samples) {
+      result.requests += 1; result.input += sample.uncachedInputTokens + sample.cacheReadTokens + sample.cacheWriteTokens; result.output += sample.outputTokens;
+      const key = `${sample.provider}\u0000${sample.model}`;
+      const model = result.models.get(key) || { provider: sample.provider, model: sample.model, requests: 0, input: 0, output: 0, unknown: 0, totals: new Map() };
+      model.requests += 1; model.input += sample.uncachedInputTokens + sample.cacheReadTokens + sample.cacheWriteTokens; model.output += sample.outputTokens;
+      const rule = selectRule(sample);
+      if (!rule) { result.unknown += 1; model.unknown += 1; }
+      else { const amount = costOf(rule, sample); result.totals.set(rule.currency, (result.totals.get(rule.currency) || 0) + amount); model.totals.set(rule.currency, (model.totals.get(rule.currency) || 0) + amount); }
+      result.models.set(key, model);
+    }
+    return result;
+  }
+  const formatTotals = (totals, unknown = 0) => [...totals].map(([currency, amount]) => money(currency, amount)).join(' + ') || (unknown ? '部分未计价' : '¥0.0000');
+  function renderUsage() {
+    if (!billing) return;
+    const sessions = usageIndex.sessions.filter((session) => session.samples.length).map((session) => ({ ...session, summary: summarize(session.samples) }));
+    const all = summarize(sessions.flatMap((session) => session.samples));
+    $('usageTotal').textContent = formatTotals(all.totals, all.unknown);
+    $('usageRequests').textContent = String(all.requests); $('usageInput').textContent = compactTokens(all.input); $('usageOutput').textContent = compactTokens(all.output);
+    $('usageUpdated').textContent = usageIndex.updatedAt ? `${sessions.length} 个有用量对话 · ${new Date(usageIndex.updatedAt).toLocaleString()} 更新` : '打开任一对话后将自动同步';
+    if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>还没有可汇总的用量</strong>打开对话并发送消息后，这里会按对话和模型持续累计。</div>'; $('sessionUsageList').replaceChildren(empty); return; }
+    $('sessionUsageList').replaceChildren(...sessions.sort((a,b) => Math.max(...b.samples.map(x=>x.time)) - Math.max(...a.samples.map(x=>x.time))).map((session) => {
+      const card = document.createElement('details'); card.className = 'session-card';
+      const models = [...session.summary.models.values()].map((model) => `<div class="session-model"><div><div class="session-model-name">${escapeHtml(model.provider)} / ${escapeHtml(model.model)}</div><div class="session-model-meta">${model.requests} 次 · 输入 ${compactTokens(model.input)} · 输出 ${compactTokens(model.output)}${model.unknown ? ` · <span class="unknown-note">${model.unknown} 次未计价</span>` : ''}</div></div><strong>${escapeHtml(formatTotals(model.totals, model.unknown))}</strong></div>`).join('');
+      card.innerHTML = `<summary><div><div class="session-title">${escapeHtml(session.title)}</div><div class="session-meta">${session.summary.requests} 次请求 · ${session.summary.models.size} 个模型</div></div><div class="session-total">${escapeHtml(formatTotals(session.summary.totals, session.summary.unknown))}</div></summary><div class="session-models">${models}</div>`;
+      return card;
+    }));
   }
   const rateCell = (value, label) => `<div class="rate-col"><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></div>`;
   function officialCard(rule, rules) {
@@ -200,7 +292,10 @@
     $('officialList').replaceChildren(...next.catalog.rules.map((rule) => officialCard(rule, next.catalog.rules)));
     if (next.customRules.length) $('customList').replaceChildren(...next.customRules.map(customCard));
     else { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>当前没有自定义规则</strong>第三方模型会显示“未配置单价”，直到你添加对应规则。</div>'; $('customList').replaceChildren(empty); }
+    renderUsage();
   }
+  function setView(view) { const usage = view === 'usage'; $('usageView').hidden = !usage; $('pricesView').hidden = usage; $('usageTab').setAttribute('aria-selected', String(usage)); $('pricesTab').setAttribute('aria-selected', String(!usage)); }
+  $('usageTab').onclick = () => setView('usage'); $('pricesTab').onclick = () => setView('prices');
   document.querySelectorAll('input[name="priceMode"]').forEach((radio) => radio.onchange = () => $('priceFields').hidden = radio.value === 'free' && radio.checked);
   $('openAdd').onclick = () => { $('priceForm').reset(); $('priceCurrency').value = 'CNY'; $('priceFields').hidden = false; $('priceDialog').showModal(); setTimeout(() => $('priceProvider').focus(), 0); };
   $('billingAuto').onchange = async () => { try { render(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); notify('自动检查设置已保存'); } catch (error) { render(billing); setStatus(error instanceof Error ? error.message : String(error), 'error'); } };
@@ -216,8 +311,9 @@
     try { render(await window.desktop.setBillingSettings({ ...billing, customRules: [...billing.customRules, rule] })); $('priceDialog').close(); notify('价格规则已保存'); } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   };
   window.desktop.onBillingChanged(render);
+  window.desktop.onBillingUsageChanged((next) => { usageIndex = next; renderUsage(); });
   window.desktop.onInfoChanged((info) => applyTheme(info.themePreference));
-  Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings()]).then(([info, settings]) => { applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
+  Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([info, settings, usage]) => { usageIndex = usage; applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
 </script>
 </body>
 </html>

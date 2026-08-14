@@ -14,9 +14,13 @@ describe("renderer pages", () => {
   });
 
   it("parses the standalone billing page script", async () => {
+    const html = await readFile(new URL("../src/renderer/billing.html", import.meta.url), "utf8");
     const scripts = await scriptsOf("billing.html");
     expect(scripts).toHaveLength(1);
     expect(() => Function(scripts[0]!)).not.toThrow();
+    expect(html).toContain("用量总览");
+    expect(html).toContain("全部对话预估费用");
+    expect(html).toContain("onBillingUsageChanged");
   });
 
   it("provides a responsive session billing rail with per-model history", async () => {
@@ -25,6 +29,8 @@ describe("renderer pages", () => {
     expect(source).toContain("available >= 338");
     expect(source).toContain("模型费用 · 点击查看详情");
     expect(source).toContain("model.totals");
+    expect(source).toContain("modelDirectories.directoryFor(sessionId).store");
+    expect(source).toContain("reportBillingUsage");
   });
 
   it("keeps the billing application-menu label unclipped", async () => {

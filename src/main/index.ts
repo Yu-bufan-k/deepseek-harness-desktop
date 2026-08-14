@@ -13,7 +13,7 @@ import {
   type UpdateChannel,
   type UpdateState
 } from "../shared/contracts.js";
-import type { BillingSettings } from "../shared/billing.js";
+import type { BillingSettings, BillingUsageIndex, BillingUsageSample } from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -43,6 +43,7 @@ let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
 let billing: BillingStore;
+let billingUsageIndex: BillingUsageIndex = { updatedAt: "", sessions: [] };
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
 let startupCompleting = false;
@@ -281,6 +282,34 @@ async function showSettings(): Promise<void> {
   await settingsWindow.loadFile(rendererPath("settings.html"));
 }
 
+function isBillingSample(value: unknown): value is BillingUsageSample {
+  if (!value || typeof value !== "object") return false;
+  const sample = value as Record<string, unknown>;
+  return typeof sample.provider === "string" && typeof sample.model === "string"
+    && ["time", "uncachedInputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"]
+      .every((key) => typeof sample[key] === "number" && Number.isFinite(sample[key]) && (sample[key] as number) >= 0);
+}
+
+function normalizeBillingUsageIndex(value: unknown): BillingUsageIndex {
+  if (!value || typeof value !== "object") throw new Error("无效的用量汇总");
+  const candidate = value as { sessions?: unknown };
+  if (!Array.isArray(candidate.sessions) || candidate.sessions.length > 10_000) throw new Error("无效的会话用量列表");
+  return {
+    updatedAt: new Date().toISOString(),
+    sessions: candidate.sessions.map((entry) => {
+      if (!entry || typeof entry !== "object") throw new Error("无效的会话用量");
+      const session = entry as { sessionId?: unknown; title?: unknown; samples?: unknown };
+      if (typeof session.sessionId !== "string" || typeof session.title !== "string" || !Array.isArray(session.samples)) throw new Error("无效的会话用量");
+      if (session.samples.length > 100_000 || !session.samples.every(isBillingSample)) throw new Error("无效的请求用量");
+      return { sessionId: session.sessionId.slice(0, 256), title: session.title.slice(0, 500), samples: session.samples };
+    })
+  };
+}
+
+function broadcastBillingUsage(): void {
+  if (billingWindow && !billingWindow.isDestroyed()) billingWindow.webContents.send(IPC.billingUsageChanged, billingUsageIndex);
+}
+
 async function showBilling(): Promise<void> {
   if (billingWindow && !billingWindow.isDestroyed()) {
     billingWindow.show();
@@ -473,6 +502,11 @@ function registerIpc(): void {
     broadcastBilling();
     return result;
   });
+  handle(IPC.getBillingUsage, () => billingUsageIndex);
+  handle(IPC.reportBillingUsage, (_event, value: unknown) => {
+    billingUsageIndex = normalizeBillingUsageIndex(value);
+    broadcastBillingUsage();
+  });
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
     try { assertTrustedIpc(event); } catch { return; }
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -620,7 +654,7 @@ void app.whenReady().then(async () => {
         }
       };
       Function("window", clientSource)(moduleWindow);
-      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions", "slots"])) {
+      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions", "slots", "modelDirectories"])) {
         throw new Error("桌面集成客户端未声明 Harness 服务依赖");
       }
       // Parse the browser bundle without executing it in Node.

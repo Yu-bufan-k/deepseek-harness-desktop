@@ -53,6 +53,17 @@ export interface BillingUsageSample {
   outputTokens: number;
 }
 
+export interface BillingSessionUsage {
+  sessionId: string;
+  title: string;
+  samples: BillingUsageSample[];
+}
+
+export interface BillingUsageIndex {
+  updatedAt: string;
+  sessions: BillingSessionUsage[];
+}
+
 export interface BillingCostLine extends BillingUsageSample {
   ruleId: string | null;
   currency: string | null;

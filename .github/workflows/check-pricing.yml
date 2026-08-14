@@ -31,5 +31,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title,
-              body: `每日检测发现官方价格页面与仓库价格清单不一致。\n\n缺失关键值：${result.missing.join(', ')}\n\n来源：${result.source}\n检测时间：${result.checkedAt}\n\n请人工核对后更新 \`pricing/prices.json\`，避免页面结构变化导致错误自动改价。`
+              body: `每日检测发现官方价格页面内容或可用性需要复核。\n\n缺失关键值：${result.missing.join(', ') || '无'}\n不可用来源：${result.unavailable.map(item => `${item.url} (${item.status ?? item.error})`).join(', ') || '无'}\n\n主来源：${result.source}\n检测时间：${result.checkedAt}\n\n请人工核对后更新 \`pricing/prices.json\`。检测流程不会根据网页内容自动改价，因此页面改版不会污染用户账本。`
             });

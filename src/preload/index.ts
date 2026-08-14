@@ -8,7 +8,7 @@ import {
   type ThemePreference,
   type UpdateChannel
 } from "../shared/contracts.js";
-import type { BillingSettings } from "../shared/billing.js";
+import type { BillingSettings, BillingUsageIndex } from "../shared/billing.js";
 
 ipcRenderer.on(IPC.openWorkspace, (_event, request: OpenWorkspaceRequest) => {
   window.postMessage({ type: IPC.openWorkspace, request }, window.location.origin);
@@ -44,6 +44,13 @@ const api: DesktopApi = {
   getBillingSettings: () => ipcRenderer.invoke(IPC.getBillingSettings),
   setBillingSettings: (settings: BillingSettings) => ipcRenderer.invoke(IPC.setBillingSettings, settings),
   checkBillingPrices: () => ipcRenderer.invoke(IPC.checkBillingPrices),
+  reportBillingUsage: (index: BillingUsageIndex) => ipcRenderer.invoke(IPC.reportBillingUsage, index),
+  getBillingUsage: () => ipcRenderer.invoke(IPC.getBillingUsage),
+  onBillingUsageChanged: (listener: (index: BillingUsageIndex) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, index: BillingUsageIndex) => listener(index);
+    ipcRenderer.on(IPC.billingUsageChanged, handler);
+    return () => ipcRenderer.removeListener(IPC.billingUsageChanged, handler);
+  },
   onInfoChanged: (listener: (info: DesktopInfo) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: DesktopInfo) => listener(info);
     ipcRenderer.on(IPC.infoChanged, handler);
