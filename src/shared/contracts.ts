@@ -57,8 +57,23 @@ export const IPC = {
   setCredential: "desktop:set-credential",
   hasCredential: "desktop:has-credential",
   removeCredential: "desktop:remove-credential",
-  infoChanged: "desktop:info-changed"
+  infoChanged: "desktop:info-changed",
+  harnessIntegrationReady: "desktop:harness-integration-ready",
+  openWorkspace: "desktop:open-workspace",
+  openWorkspaceResult: "desktop:open-workspace-result"
 } as const;
+
+export interface OpenWorkspaceRequest {
+  requestId: string;
+  path: string;
+}
+
+export interface OpenWorkspaceResult {
+  requestId: string;
+  path: string;
+  ok: boolean;
+  error?: string;
+}
 
 export interface DesktopApi {
   getInfo(): Promise<DesktopInfo>;

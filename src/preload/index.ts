@@ -1,5 +1,27 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC, type DesktopApi, type DesktopInfo, type ThemePreference, type UpdateChannel } from "../shared/contracts.js";
+import {
+  IPC,
+  type DesktopApi,
+  type DesktopInfo,
+  type OpenWorkspaceRequest,
+  type OpenWorkspaceResult,
+  type ThemePreference,
+  type UpdateChannel
+} from "../shared/contracts.js";
+
+ipcRenderer.on(IPC.openWorkspace, (_event, request: OpenWorkspaceRequest) => {
+  window.postMessage({ type: IPC.openWorkspace, request }, window.location.origin);
+});
+
+window.addEventListener("message", (event: MessageEvent<unknown>) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const message = event.data as { type?: unknown; result?: unknown } | null;
+  if (message?.type === IPC.harnessIntegrationReady) {
+    ipcRenderer.send(IPC.harnessIntegrationReady);
+  } else if (message?.type === IPC.openWorkspaceResult) {
+    ipcRenderer.send(IPC.openWorkspaceResult, message.result as OpenWorkspaceResult);
+  }
+});
 
 const api: DesktopApi = {
   getInfo: () => ipcRenderer.invoke(IPC.getInfo),

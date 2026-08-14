@@ -28,6 +28,10 @@ DeepSeek Harness Desktop 是一个面向 Windows 与 macOS 的 Electron 桌面�
 
 ## 本地开发
 
+### 从资源管理器打开工作区
+
+安装后可把一个文件夹直接拖到桌面快捷方式或程序文件上。应用会自动注册该文件夹为工作区，并始终为它新建一个会话；工作区已经存在时也不会复用旧的空白会话。应用已经运行时再次拖入同样有效。
+
 ```powershell
 pnpm install
 pnpm test

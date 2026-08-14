@@ -1,8 +1,18 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { unwatchFile, watchFile } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainInvokeEvent } from "electron";
 import log from "electron-log/main.js";
-import { IPC, type DesktopInfo, type HarnessInfo, type ThemePreference, type UpdateChannel, type UpdateState } from "../shared/contracts.js";
+import {
+  IPC,
+  type DesktopInfo,
+  type HarnessInfo,
+  type OpenWorkspaceRequest,
+  type OpenWorkspaceResult,
+  type ThemePreference,
+  type UpdateChannel,
+  type UpdateState
+} from "../shared/contracts.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -12,11 +22,15 @@ import { createBackup } from "./backup.js";
 import { HarnessThemeStore } from "./harness-theme-store.js";
 import { DirectoryPickerBridge } from "./directory-picker-bridge.js";
 import { writeDesktopOverlay } from "./desktop-overlay.js";
+import { resolveLaunchDirectories } from "./launch-paths.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
 const SPLASH_MINIMUM_MS = 3600;
 const windows = new Set<BrowserWindow>();
+const integrationReadyWindows = new WeakSet<BrowserWindow>();
+const pendingWorkspaceOpens = new Map<string, OpenWorkspaceRequest & { sentTo: number | null }>();
+const earlyOpenPaths: string[] = [];
 let settingsWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let harness: HarnessManager;
@@ -40,6 +54,43 @@ function rendererPath(file: string): string { return path.join(__dirname, "..", 
 function appIconPath(): string { return rendererPath(path.join("assets", "deepseek-mark.png")); }
 function directoryPickerPluginPath(): string { return path.join(__dirname, "..", "sidecar", "electron-directory-picker.js"); }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+function launchArgumentsForPath(filePath: string): string[] {
+  return app.isPackaged ? [process.execPath, filePath] : [process.execPath, ".", filePath];
+}
+
+function focusHarnessWindow(window?: BrowserWindow | null): void {
+  const target = window && !window.isDestroyed() ? window : [...windows].find((item) => !item.isDestroyed());
+  if (!target) return;
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
+}
+
+function sendPendingWorkspaceOpens(window: BrowserWindow): void {
+  for (const request of pendingWorkspaceOpens.values()) {
+    if (request.sentTo !== null) continue;
+    request.sentTo = window.id;
+    window.webContents.send(IPC.openWorkspace, {
+      requestId: request.requestId,
+      path: request.path
+    } satisfies OpenWorkspaceRequest);
+  }
+}
+
+async function queueLaunchDirectories(argv: readonly string[], workingDirectory: string): Promise<void> {
+  const directories = await resolveLaunchDirectories(argv, workingDirectory, app.isPackaged);
+  for (const directory of directories) {
+    const requestId = randomUUID();
+    pendingWorkspaceOpens.set(requestId, { requestId, path: directory, sentTo: null });
+    log.info(`[desktop] queued workspace from shell: ${directory}`);
+  }
+  if (directories.length === 0) return;
+  const window = [...windows].find((item) => !item.isDestroyed());
+  if (window) {
+    focusHarnessWindow(window);
+    if (integrationReadyWindows.has(window)) sendPendingWorkspaceOpens(window);
+  }
+}
 
 function currentInfo(): DesktopInfo {
   const value = settings.get();
@@ -109,7 +160,15 @@ async function createHarnessWindow(readyInfo?: HarnessInfo, show = true): Promis
     }
   });
   windows.add(window);
-  window.on("closed", () => windows.delete(window));
+  window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) integrationReadyWindows.delete(window);
+  });
+  window.on("closed", () => {
+    windows.delete(window);
+    for (const request of pendingWorkspaceOpens.values()) {
+      if (request.sentTo === window.id) request.sentTo = null;
+    }
+  });
   secureWindow(window, origin);
   await window.loadURL(`${origin}/#desktop-session=${harness.sessionToken}`);
   if (show && !window.isDestroyed()) window.show();
@@ -363,6 +422,38 @@ function registerIpc(): void {
   handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
   handle(IPC.removeCredential, (_event, name: string) => credentials.remove(name));
+  ipcMain.on(IPC.harnessIntegrationReady, (event) => {
+    try { assertTrustedIpc(event); } catch { return; }
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !windows.has(window)) return;
+    integrationReadyWindows.add(window);
+    for (const request of pendingWorkspaceOpens.values()) {
+      if (request.sentTo === window.id) request.sentTo = null;
+    }
+    sendPendingWorkspaceOpens(window);
+  });
+  ipcMain.on(IPC.openWorkspaceResult, (event, result: OpenWorkspaceResult) => {
+    try { assertTrustedIpc(event); } catch { return; }
+    if (!result || typeof result.requestId !== "string" || typeof result.path !== "string" || typeof result.ok !== "boolean") return;
+    const request = pendingWorkspaceOpens.get(result.requestId);
+    if (!request || request.path !== result.path) return;
+    pendingWorkspaceOpens.delete(result.requestId);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (result.ok) {
+      log.info(`[desktop] opened workspace in a new session: ${result.path}`);
+      focusHarnessWindow(window);
+      return;
+    }
+    log.error(`[desktop] failed to open workspace from shell: ${result.path}: ${result.error ?? "unknown error"}`);
+    const options: Electron.MessageBoxOptions = {
+      type: "error",
+      title: "无法打开工作区",
+      message: "拖入的文件夹未能在 Harness 中打开",
+      detail: `${result.path}\n\n${result.error ?? "未知错误"}`,
+      buttons: ["知道了"]
+    };
+    void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+  });
 }
 
 async function handleHarnessFailure(): Promise<void> {
@@ -382,11 +473,18 @@ async function handleHarnessFailure(): Promise<void> {
   else app.quit();
 }
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, commandLine, workingDirectory) => {
+  void queueLaunchDirectories(commandLine, workingDirectory);
   if (splashWindow && !splashWindow.isDestroyed()) { splashWindow.show(); splashWindow.focus(); return; }
   const window = [...windows][0];
-  if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
-  else void createHarnessWindow();
+  if (window) focusHarnessWindow(window);
+  else if (harness) void createHarnessWindow();
+});
+
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  if (app.isReady()) void queueLaunchDirectories(launchArgumentsForPath(filePath), process.cwd());
+  else earlyOpenPaths.push(filePath);
 });
 
 app.on("before-quit", (event) => {
@@ -433,9 +531,42 @@ void app.whenReady().then(async () => {
   updates.on("changed", broadcastInfo);
   registerIpc();
   installMenu();
+  await queueLaunchDirectories(process.argv, process.cwd());
+  for (const filePath of earlyOpenPaths.splice(0)) {
+    await queueLaunchDirectories(launchArgumentsForPath(filePath), process.cwd());
+  }
   try {
     if (process.env.DSH_DESKTOP_SMOKE_TEST === "1") {
-      await harness.start();
+      const started = await harness.start();
+      const root = await fetch(`http://127.0.0.1:${started.port}/`).then((response) => response.text());
+      if (!root.includes("deepseek-harness-desktop-integration")) {
+        throw new Error("桌面集成客户端未写入 Harness 启动清单");
+      }
+      const bootScripts = [...root.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+        .map((match) => match[1])
+        .filter((source): source is string => typeof source === "string"
+          && (source.includes("window.__DSH_BOOT__ =") || source.includes("deepseek-harness-desktop-integration")));
+      const smokeWindow: { __DSH_BOOT__?: { entries: Array<{ id: string }> } } = {};
+      for (const source of bootScripts) Function("window", source)(smokeWindow);
+      if (!smokeWindow.__DSH_BOOT__?.entries.some((entry) => entry.id === "deepseek-harness-desktop-integration")) {
+        throw new Error("桌面集成客户端未能加入 Harness 启动图");
+      }
+      const clientSource = await fetch(`http://127.0.0.1:${started.port}/desktop-integration/client.js`).then((response) => response.text());
+      if (!clientSource.includes("desktop:open-workspace")) {
+        throw new Error("桌面集成客户端路由不可用");
+      }
+      let clientExports: { inject?: unknown } | undefined;
+      const moduleWindow = {
+        __ModuleLoader__: {
+          load: (handoff: { factory: () => { inject?: unknown } }) => { clientExports = handoff.factory(); }
+        }
+      };
+      Function("window", clientSource)(moduleWindow);
+      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions"])) {
+        throw new Error("桌面集成客户端未声明 Harness 服务依赖");
+      }
+      // Parse the browser bundle without executing it in Node.
+      Function(clientSource);
       await harness.restart();
       log.info("桌面端冒烟测试通过", harness.getInfo());
       quitting = true;
