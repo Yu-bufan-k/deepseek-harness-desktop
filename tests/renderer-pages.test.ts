@@ -18,4 +18,17 @@ describe("renderer pages", () => {
     expect(scripts).toHaveLength(1);
     expect(() => Function(scripts[0]!)).not.toThrow();
   });
+
+  it("provides a responsive session billing rail with per-model history", async () => {
+    const source = await readFile(new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url), "utf8");
+    expect(source).toContain("(min-width: 1280px)");
+    expect(source).toContain("本会话曾用模型");
+    expect(source).toContain("model.totals");
+  });
+
+  it("keeps the billing application-menu label unclipped", async () => {
+    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
+    expect(source).toContain('label: "用量与费用", accelerator: "CmdOrCtrl+Shift+U"');
+    expect(source).not.toContain('label: "用量与费用…"');
+  });
 });

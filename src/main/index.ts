@@ -364,7 +364,7 @@ function installMenu(): void {
       label: "应用",
       submenu: [
         { label: "设置…", accelerator: "CmdOrCtrl+,", click: () => void showSettings() },
-        { label: "用量与费用…", accelerator: "CmdOrCtrl+Shift+U", click: () => void showBilling() },
+        { label: "用量与费用", accelerator: "CmdOrCtrl+Shift+U", click: () => void showBilling() },
         { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
         { type: "separator" },
         { role: "toggleDevTools", label: "开发者工具" }
