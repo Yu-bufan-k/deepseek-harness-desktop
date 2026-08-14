@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Harness Desktop</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: #f7f7f8; color: #111214; transition: opacity .42s ease, transform .42s cubic-bezier(.2,.8,.2,1); }
+    body::before { content: ""; position: fixed; inset: -35%; background: radial-gradient(circle at 50% 48%, rgba(95,118,255,.13), transparent 30%); animation: breathe 3.2s ease-in-out infinite; }
+    .stage { position: relative; width: 100%; height: 100%; display: grid; place-items: center; padding: 44px; -webkit-app-region: drag; }
+    .content { width: min(520px, 100%); text-align: center; }
+    .mark-wrap { width: 88px; height: 88px; margin: 0 auto 26px; display: grid; place-items: center; position: relative; opacity: 0; transform: translateY(18px) scale(.76); filter: blur(12px); animation: mark-in 1.15s cubic-bezier(.16,1,.3,1) .18s forwards; }
+    .mark-wrap::before { content: ""; position: absolute; inset: -22px; border-radius: 50%; border: 1px solid rgba(17,18,20,.08); transform: scale(.7); opacity: 0; animation: ring 1.3s cubic-bezier(.16,1,.3,1) .45s forwards; }
+    .mark { width: 76px; height: 76px; display: block; color: #050506; }
+    .wordmark { min-height: 50px; display: flex; justify-content: center; align-items: baseline; flex-wrap: nowrap; font-size: 34px; font-weight: 590; letter-spacing: -.9px; line-height: 1; }
+    .letter { display: inline-block; opacity: 0; transform: translateY(12px); filter: blur(5px); animation: letter-in .62s cubic-bezier(.16,1,.3,1) forwards; }
+    .letter.space { width: .28em; }
+    .status-area { margin-top: 30px; min-height: 72px; opacity: 0; animation: fade-in .7s ease 2.35s forwards; }
+    .status { color: #74777d; font-size: 13px; line-height: 20px; }
+    .progress { width: 138px; height: 2px; margin: 14px auto 0; overflow: hidden; border-radius: 99px; background: rgba(17,18,20,.09); }
+    .progress::after { content: ""; display: block; width: 55%; height: 100%; border-radius: inherit; background: #111214; animation: progress 1.45s cubic-bezier(.65,0,.35,1) infinite; }
+    .error-actions { display: none; justify-content: center; gap: 8px; margin-top: 16px; -webkit-app-region: no-drag; }
+    button { height: 34px; padding: 0 14px; border-radius: 9px; border: 1px solid rgba(17,18,20,.13); background: rgba(255,255,255,.72); color: #111214; font: inherit; cursor: pointer; }
+    button.primary { color: white; background: #111214; border-color: #111214; }
+    body.failed .progress { display: none; }
+    body.failed .status { color: #bd2c2c; }
+    body.failed .error-actions { display: flex; }
+    body.exiting { opacity: 0; transform: scale(1.018); }
+    @keyframes mark-in { to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+    @keyframes ring { 55% { opacity: 1; } to { opacity: 0; transform: scale(1.35); } }
+    @keyframes letter-in { to { opacity: 1; transform: translateY(0); filter: blur(0); } }
+    @keyframes fade-in { to { opacity: 1; } }
+    @keyframes progress { from { transform: translateX(-110%); } to { transform: translateX(210%); } }
+    @keyframes breathe { 0%,100% { opacity: .55; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.04); } }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111214; color: #f5f5f6; }
+      body::before { background: radial-gradient(circle at 50% 48%, rgba(95,118,255,.17), transparent 31%); }
+      .mark { color: #fff; }
+      .mark-wrap::before { border-color: rgba(255,255,255,.11); }
+      .status { color: #90939a; }
+      .progress { background: rgba(255,255,255,.1); }
+      .progress::after { background: #f5f5f6; }
+      button { color: #f5f5f6; background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.14); }
+      button.primary { color: #111214; background: #f5f5f6; border-color: #f5f5f6; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mark-wrap, .letter, .status-area { animation-duration: .01ms; animation-delay: 0s !important; }
+      body::before, .progress::after { animation-duration: 2.4s; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <div class="content">
+      <div class="mark-wrap"><img class="mark" src="assets/deepseek-mark.svg" alt="DeepSeek"></div>
+      <div class="wordmark" id="wordmark" aria-label="DeepSeek Harness"></div>
+      <div class="status-area">
+        <div class="status" id="status">正在启动本地 Harness…</div>
+        <div class="progress"></div>
+        <div class="error-actions"><button class="primary" id="retry">重新启动</button><button id="logs">打开日志</button></div>
+      </div>
+    </div>
+  </main>
+  <script>
+    const word = 'DeepSeek Harness';
+    const wordmark = document.getElementById('wordmark');
+    [...word].forEach((character, index) => {
+      const span = document.createElement('span');
+      span.className = character === ' ' ? 'letter space' : 'letter';
+      span.textContent = character === ' ' ? '\u00a0' : character;
+      span.style.animationDelay = `${860 + index * 48}ms`;
+      wordmark.appendChild(span);
+    });
+
+    let animationComplete = false;
+    let latestInfo = null;
+    const status = document.getElementById('status');
+    function render(info) {
+      latestInfo = info;
+      const harness = info.harness;
+      document.body.classList.toggle('failed', harness.status === 'failed');
+      if (harness.status === 'failed') status.textContent = harness.errorSummary || 'Harness 启动失败';
+      else if (harness.status === 'ready') status.textContent = animationComplete ? '正在准备工作台…' : 'Harness 已就绪';
+      else if (harness.status === 'stopping') status.textContent = '正在重新启动 Harness…';
+      else status.textContent = '正在启动本地 Harness…';
+    }
+    window.desktop.onInfoChanged(render);
+    window.desktop.getInfo().then(render);
+
+    setTimeout(async () => {
+      animationComplete = true;
+      if (latestInfo) render(latestInfo);
+      await window.desktop.finishSplashAnimation();
+    }, 3600);
+
+    window.desktop.onSplashReady(() => document.body.classList.add('exiting'));
+    document.getElementById('retry').onclick = async () => {
+      document.body.classList.remove('failed');
+      status.textContent = '正在重新启动 Harness…';
+      try { await window.desktop.retryStartup(); } catch (error) { status.textContent = String(error); document.body.classList.add('failed'); }
+    };
+    document.getElementById('logs').onclick = () => window.desktop.openLogs();
+  </script>
+</body>
+</html>

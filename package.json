@@ -1,0 +1,104 @@
+{
+  "name": "deepseek-harness-desktop",
+  "version": "0.1.0",
+  "description": "Unofficial community desktop client for DeepSeek Harness",
+  "author": "DeepSeek Harness Desktop Community",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "packageManager": "pnpm@10.26.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "clean": "rimraf dist release coverage .pack-app",
+    "build": "pnpm clean && tsup && pnpm copy:assets",
+    "copy:assets": "node scripts/copy-assets.mjs",
+    "dev": "pnpm build && electron .",
+    "start": "electron .",
+    "smoke": "pnpm build && cross-env DSH_DESKTOP_SMOKE_TEST=1 electron .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "package:stage": "node scripts/prepare-package.mjs",
+    "package:sync-peers": "node scripts/sync-packaging-peers.mjs",
+    "pack": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --dir",
+    "dist:win": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --win nsis portable --x64",
+    "dist:mac": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --mac dmg zip --x64 --arm64"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-theme": "0.1.0-rc.6",
+    "electron-log": "5.4.3",
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "cross-env": "10.0.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "rimraf": "6.0.1",
+    "tsup": "8.5.0",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  },
+  "build": {
+    "appId": "com.deepseek.harness.desktop.community",
+    "productName": "DeepSeek Harness Desktop",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@deepseek-ai/dsh/**",
+      "node_modules/@deepseek-ai/**"
+    ],
+    "files": [
+      "dist/**",
+      "package.json",
+      "node_modules/@deepseek-ai/**",
+      "node_modules/electron-log/**",
+      "node_modules/electron-updater/**",
+      "node_modules/builder-util-runtime/**",
+      "node_modules/lazy-val/**",
+      "node_modules/lodash.escaperegexp/**",
+      "node_modules/lodash.isequal/**",
+      "node_modules/semver/**",
+      "node_modules/tiny-typed-emitter/**"
+    ],
+    "directories": {
+      "app": ".pack-app",
+      "output": "release",
+      "buildResources": "build"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@deepseek-ai/dsh-subprocess-local",
+      "electron",
+      "esbuild",
+      "koffi",
+      "node-pty",
+      "protobufjs"
+    ]
+  }
+}

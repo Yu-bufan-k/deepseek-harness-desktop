@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            command: pnpm run dist:win --
+          - os: macos-latest
+            command: pnpm run dist:mac --
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Configure GitHub updater target
+        shell: bash
+        run: |
+          echo "UPDATE_OWNER=${GITHUB_REPOSITORY%%/*}" >> "$GITHUB_ENV"
+          echo "UPDATE_REPO=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_ENV"
+      - name: Build release artifacts
+        shell: bash
+        run: ${{ matrix.command }} --publish always --config.publish.provider=github --config.publish.owner="$UPDATE_OWNER" --config.publish.repo="$UPDATE_REPO"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"

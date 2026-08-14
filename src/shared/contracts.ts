@@ -1,0 +1,80 @@
+export type HarnessStatus = "starting" | "ready" | "stopping" | "stopped" | "failed";
+
+export interface HarnessInfo {
+  status: HarnessStatus;
+  version: string;
+  port: number | null;
+  pid: number | null;
+  startedAt: string | null;
+  errorSummary: string | null;
+}
+
+export type UpdatePhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "installing"
+  | "error";
+
+export interface UpdateState {
+  phase: UpdatePhase;
+  configured: boolean;
+  version: string | null;
+  percent: number | null;
+  errorSummary: string | null;
+}
+
+export type UpdateChannel = "stable" | "beta";
+export type ThemePreference = "light" | "dark" | "system";
+
+export interface DesktopInfo {
+  appVersion: string;
+  harness: HarnessInfo;
+  update: UpdateState;
+  updateChannel: UpdateChannel;
+  themePreference: ThemePreference;
+  userDataPath: string;
+  workspacePath: string | null;
+  logsPath: string;
+  unofficialNotice: string;
+}
+
+export const IPC = {
+  getInfo: "desktop:get-info",
+  restartHarness: "desktop:restart-harness",
+  chooseWorkspace: "desktop:choose-workspace",
+  openLogs: "desktop:open-logs",
+  checkUpdate: "desktop:check-update",
+  downloadUpdate: "desktop:download-update",
+  installUpdate: "desktop:install-update",
+  setUpdateChannel: "desktop:set-update-channel",
+  setThemePreference: "desktop:set-theme-preference",
+  finishSplashAnimation: "desktop:finish-splash-animation",
+  retryStartup: "desktop:retry-startup",
+  splashReady: "desktop:splash-ready",
+  setCredential: "desktop:set-credential",
+  hasCredential: "desktop:has-credential",
+  removeCredential: "desktop:remove-credential",
+  infoChanged: "desktop:info-changed"
+} as const;
+
+export interface DesktopApi {
+  getInfo(): Promise<DesktopInfo>;
+  restartHarness(): Promise<HarnessInfo>;
+  chooseWorkspace(): Promise<string | null>;
+  openLogs(): Promise<void>;
+  checkUpdate(): Promise<UpdateState>;
+  downloadUpdate(): Promise<UpdateState>;
+  installUpdate(): Promise<void>;
+  setUpdateChannel(channel: UpdateChannel): Promise<UpdateState>;
+  setThemePreference(preference: ThemePreference): Promise<ThemePreference>;
+  finishSplashAnimation(): Promise<void>;
+  retryStartup(): Promise<HarnessInfo>;
+  setCredential(name: string, value: string): Promise<void>;
+  hasCredential(name: string): Promise<boolean>;
+  removeCredential(name: string): Promise<void>;
+  onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
+  onSplashReady(listener: () => void): () => void;
+}

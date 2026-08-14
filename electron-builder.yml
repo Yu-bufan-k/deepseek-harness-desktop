@@ -1,0 +1,40 @@
+appId: com.deepseek.harness.desktop.community
+productName: DeepSeek Harness Desktop
+electronVersion: 43.4.0
+npmRebuild: false
+asar: true
+asarUnpack:
+  - node_modules/**
+files:
+  - dist/**
+  - package.json
+  - node_modules/**
+directories:
+  output: ../release
+  buildResources: ../build
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+win:
+  icon: icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  artifactName: ${productName}-Setup-${version}-${os}-${arch}.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+portable:
+  artifactName: ${productName}-Portable-${version}-${os}-${arch}.${ext}
+mac:
+  icon: icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false

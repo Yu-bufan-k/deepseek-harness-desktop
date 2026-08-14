@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek Harness Desktop 设置</title>
+  <link rel="stylesheet" href="harness-theme/base.css">
+  <link rel="stylesheet" href="harness-theme/design-platform.css">
+  <link rel="stylesheet" href="harness-theme/scrollbar.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background: var(--dsw-alias-bg-base);
+      color: var(--dsw-alias-label-primary);
+      font-family: var(--dsw-font-family);
+      font-size: 14px;
+      transition: background .15s var(--ds-ease-in-out), color .15s var(--ds-ease-in-out);
+    }
+    main { width: min(760px, calc(100% - 48px)); margin: 0 auto; padding: 32px 0 52px; }
+    header { padding: 0 2px 24px; }
+    h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 30px; letter-spacing: -.2px; }
+    .subtitle { color: var(--dsw-alias-label-tertiary); margin: 6px 0 0; font-size: 13px; line-height: 20px; }
+    .group { border-top: 1px solid var(--dsw-alias-border-l2); padding: 20px 2px 22px; }
+    .group:last-of-type { border-bottom: 1px solid var(--dsw-alias-border-l2); }
+    .group-heading { margin-bottom: 14px; }
+    h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 22px; }
+    .description { color: var(--dsw-alias-label-tertiary); margin: 4px 0 0; font-size: 12px; line-height: 19px; }
+    .appearance-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .theme-card {
+      height: auto;
+      min-width: 0;
+      border: 1px solid var(--dsw-alias-border-l2);
+      background: transparent;
+      color: var(--dsw-alias-label-primary);
+      font: inherit;
+      cursor: pointer;
+      border-radius: 16px;
+      padding: 12px;
+      text-align: left;
+      transition: background .14s var(--ds-ease-in-out), border-color .14s var(--ds-ease-in-out);
+    }
+    .theme-card:hover:not([aria-pressed="true"]) { background: var(--dsw-alias-interactive-bg-hover); }
+    .theme-card[aria-pressed="true"] { background: var(--dsw-alias-bg-module-platform); border-color: var(--dsw-static-neutral-bluish-400); }
+    .theme-card:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 2px solid var(--dsw-alias-state-business-primary);
+      outline-offset: 2px;
+    }
+    .theme-preview { height: 58px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; overflow: hidden; display: grid; grid-template-columns: 28% 1fr; margin-bottom: 9px; }
+    .theme-preview::before { content: ""; border-right: 1px solid rgba(127,130,135,.22); }
+    .theme-preview::after { content: ""; width: 54%; height: 7px; border-radius: 5px; margin: 14px 12px; box-shadow: 0 14px 0 -1px currentColor; opacity: .32; }
+    .preview-light { background: #fff; color: #9ca3af; }
+    .preview-light::before { background: #f5f6f7; }
+    .preview-dark { background: #151517; color: #72757b; }
+    .preview-dark::before { background: #212123; }
+    .preview-system { background: linear-gradient(110deg, #fff 0 50%, #151517 50%); color: #858990; }
+    .preview-system::before { background: linear-gradient(110deg, #f5f6f7 0 50%, #212123 50%); }
+    .theme-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; line-height: 20px; }
+    .selected-mark { color: var(--dsw-alias-state-business-primary); opacity: 0; font-weight: 600; }
+    .theme-card[aria-pressed="true"] .selected-mark { opacity: 1; }
+    .info-list { margin: 0; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; overflow: hidden; }
+    .info-row { min-height: 42px; display: grid; grid-template-columns: 142px minmax(0, 1fr); align-items: center; gap: 14px; padding: 9px 13px; background: var(--dsw-alias-bg-layer-1); }
+    .info-row + .info-row { border-top: 1px solid var(--dsw-alias-border-l1); }
+    dt { color: var(--dsw-alias-label-tertiary); font-size: 13px; }
+    dd { min-width: 0; margin: 0; overflow-wrap: anywhere; line-height: 20px; }
+    .mono { font-family: var(--ds-font-family-code); font-size: 12px; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 13px; }
+    button, select, input {
+      height: 36px;
+      border: 1px solid var(--dsw-alias-border-l2);
+      background: var(--dsw-alias-bg-layer-1);
+      color: var(--dsw-alias-label-primary);
+      border-radius: 8px;
+      padding: 0 12px;
+      font: inherit;
+      font-size: 13px;
+    }
+    button { cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+    button:disabled { color: var(--dsw-alias-label-caption); cursor: default; opacity: .66; }
+    button.primary { background: var(--dsw-alias-button-primary-fill); border-color: transparent; color: var(--dsw-alias-label-primary-foreground); }
+    button.primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+    select { min-width: 104px; }
+    input { min-width: 0; flex: 1 1 210px; outline: none; }
+    input::placeholder { color: var(--dsw-alias-label-caption); }
+    .status-line { min-height: 24px; display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; background: var(--dsw-alias-label-caption); }
+    .status-dot[data-phase="ready"], .status-dot[data-phase="available"] { background: var(--dsw-alias-state-success-primary); }
+    .status-dot[data-phase="checking"], .status-dot[data-phase="downloading"], .status-dot[data-phase="installing"] { background: var(--dsw-alias-state-business-primary); }
+    .status-dot[data-phase="error"], .status-failed, .status-error { color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-state-error-primary); }
+    .status-ready { color: var(--dsw-alias-state-success-primary); }
+    #message { min-height: 20px; color: var(--dsw-alias-label-tertiary); margin: 14px 2px 0; font-size: 12px; }
+    @media (max-width: 650px) {
+      main { width: min(100% - 28px, 760px); padding-top: 22px; }
+      .appearance-grid { grid-template-columns: 1fr; }
+      .theme-preview { display: none; }
+      .info-row { grid-template-columns: 110px minmax(0, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>桌面设置</h1>
+    <p class="subtitle" id="notice"></p>
+  </header>
+
+  <section class="group">
+    <div class="group-heading"><h2>外观</h2><p class="description">与 DeepSeek Harness 共用外观设置。</p></div>
+    <div class="appearance-grid" role="group" aria-label="外观">
+      <button class="theme-card" data-theme="light" aria-pressed="false"><span class="theme-preview preview-light"></span><span class="theme-label"><span>浅色</span><span class="selected-mark">✓</span></span></button>
+      <button class="theme-card" data-theme="dark" aria-pressed="false"><span class="theme-preview preview-dark"></span><span class="theme-label"><span>深色</span><span class="selected-mark">✓</span></span></button>
+      <button class="theme-card" data-theme="system" aria-pressed="false"><span class="theme-preview preview-system"></span><span class="theme-label"><span>跟随系统</span><span class="selected-mark">✓</span></span></button>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-heading"><h2>运行状态</h2></div>
+    <dl class="info-list">
+      <div class="info-row"><dt>桌面版本</dt><dd id="appVersion">—</dd></div>
+      <div class="info-row"><dt>Harness 版本</dt><dd id="harnessVersion">—</dd></div>
+      <div class="info-row"><dt>Harness 状态</dt><dd id="harnessStatus">—</dd></div>
+      <div class="info-row"><dt>工作区</dt><dd id="workspace">—</dd></div>
+      <div class="info-row"><dt>数据目录</dt><dd id="userData" class="mono">—</dd></div>
+    </dl>
+    <div class="actions"><button id="chooseWorkspace" class="primary">选择工作区</button><button id="restart">重启 Harness</button><button id="logs">打开日志</button></div>
+  </section>
+
+  <section class="group">
+    <div class="group-heading"><h2>更新</h2><p class="description">桌面壳与验证过的 Harness 运行时会作为整包更新。</p></div>
+    <div class="actions">
+      <select id="channel" aria-label="更新通道"><option value="stable">Stable</option><option value="beta">Beta</option></select>
+      <button id="check">检查更新</button><button id="download">下载更新</button><button id="install">重启并安装</button>
+    </div>
+    <div class="status-line"><span class="status-dot" id="updateDot"></span><span id="updateStatus"></span></div>
+  </section>
+
+  <section class="group">
+    <div class="group-heading"><h2>系统凭据</h2><p class="description">凭据由操作系统加密保存，不会显示或写入日志。</p></div>
+    <div class="actions"><input id="credentialName" aria-label="凭据名称" placeholder="DEEPSEEK_API_KEY"><input id="credentialValue" aria-label="凭据值" type="password" placeholder="API Key"><button id="saveCredential" class="primary">保存</button><button id="removeCredential">移除</button></div>
+  </section>
+  <div id="message" role="status" aria-live="polite"></div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const systemDark = matchMedia('(prefers-color-scheme: dark)');
+  let info;
+  function applyTheme(preference) {
+    const dark = preference === 'dark' || (preference === 'system' && systemDark.matches);
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    document.body.toggleAttribute('data-ds-dark-theme', dark);
+    document.querySelectorAll('.theme-card').forEach((card) => card.setAttribute('aria-pressed', String(card.dataset.theme === preference)));
+  }
+  systemDark.addEventListener('change', () => { if (info?.themePreference === 'system') applyTheme('system'); });
+  const phaseLabels = { idle: '已是最新状态', checking: '正在检查更新…', available: '发现新版本', downloading: '正在下载…', ready: '更新已下载', installing: '正在安装…', error: '更新检查失败' };
+  function render(next) {
+    info = next;
+    applyTheme(next.themePreference);
+    $('notice').textContent = next.unofficialNotice;
+    $('appVersion').textContent = next.appVersion;
+    $('harnessVersion').textContent = next.harness.version;
+    $('harnessStatus').textContent = next.harness.errorSummary ? `${next.harness.status} · ${next.harness.errorSummary}` : next.harness.status;
+    $('harnessStatus').className = `status-${next.harness.status}`;
+    $('workspace').textContent = next.workspacePath || '未选择';
+    $('userData').textContent = next.userDataPath;
+    $('channel').value = next.updateChannel;
+    const update = next.update;
+    $('updateDot').dataset.phase = update.configured ? update.phase : 'idle';
+    $('updateStatus').textContent = update.configured
+      ? `${phaseLabels[update.phase]}${update.version ? ` · ${update.version}` : ''}${update.percent != null ? ` · ${update.percent.toFixed(1)}%` : ''}${update.errorSummary ? ` · ${update.errorSummary}` : ''}`
+      : '当前开发构建未配置在线更新源';
+    $('check').disabled = !update.configured || update.phase === 'checking';
+    $('download').disabled = update.phase !== 'available';
+    $('install').disabled = update.phase !== 'ready';
+  }
+  async function act(task, success) {
+    try {
+      $('message').textContent = '处理中…';
+      await task();
+      $('message').textContent = success;
+      render(await window.desktop.getInfo());
+    } catch (error) {
+      $('message').textContent = error instanceof Error ? error.message : String(error);
+    }
+  }
+  document.querySelectorAll('.theme-card').forEach((card) => card.onclick = () => act(() => window.desktop.setThemePreference(card.dataset.theme), `外观已切换为“${card.querySelector('.theme-label span').textContent}”`));
+  $('chooseWorkspace').onclick = () => act(() => window.desktop.chooseWorkspace(), '工作区已更新');
+  $('restart').onclick = () => act(() => window.desktop.restartHarness(), 'Harness 已重启');
+  $('logs').onclick = () => act(() => window.desktop.openLogs(), '日志目录已打开');
+  $('check').onclick = () => act(() => window.desktop.checkUpdate(), '检查完成');
+  $('download').onclick = () => act(() => window.desktop.downloadUpdate(), '下载完成');
+  $('install').onclick = () => act(() => window.desktop.installUpdate(), '正在安装');
+  $('channel').onchange = () => act(() => window.desktop.setUpdateChannel($('channel').value), '更新通道已修改');
+  $('saveCredential').onclick = () => act(async () => { await window.desktop.setCredential($('credentialName').value, $('credentialValue').value); $('credentialValue').value = ''; await window.desktop.restartHarness(); }, '凭据已安全保存并重启 Harness');
+  $('removeCredential').onclick = () => act(async () => { await window.desktop.removeCredential($('credentialName').value); await window.desktop.restartHarness(); }, '凭据已移除');
+  window.desktop.onInfoChanged(render);
+  window.desktop.getInfo().then(render);
+</script>
+</body>
+</html>
