@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  billingMinuteAt, billingRuleStatus, BillingUsageSummarizer, calculateBillingCost, formatBillingMoney, isBillingPeakWindow, selectBillingRule, summarizeBillingUsage,
+  billingMinuteAt, billingRuleStatus, BillingUsageSummarizer, calculateBillingCost, formatBillingMoney, isBillingPeakWindow, restoreOfficialBilling, selectBillingRule, summarizeBillingUsage,
   type BillingSettings, type BillingUsageSample
 } from "../src/shared/billing.js";
 
@@ -15,7 +15,7 @@ const settings: BillingSettings = {
       effectiveFrom: "2026-08-17T00:00:00+08:00", effectiveTo: "2027-01-01T00:00:00+08:00",
       rates: rates(1.5, 0.05, 0.2, 4.5), peakRates: rates(3, 0.1, 0.4, 9), peakScheduleId: "cn"
     }]
-  }, customRules: []
+  }, customRules: [], providerBindings: [], balanceWarning: { enabled: false, thresholds: { CNY: "10", USD: "2" } }
 };
 const sample = (iso: string): BillingUsageSample => ({ provider: "deepseek-official", model: "deepseek-v4-flash", time: Date.parse(iso), uncachedInputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000, outputTokens: 1_000_000 });
 const amount = (line: ReturnType<typeof calculateBillingCost>) => Number(BigInt(line.amountNanos!)) / 1e9;
@@ -47,6 +47,17 @@ describe("billing engine", () => {
     const custom = { ...settings.catalog.rules[0]!, id: "custom", mode: "custom" as const, effectiveFrom: "2026-08-16T00:00:00+08:00", effectiveTo: "2026-08-20T00:00:00+08:00", rates: rates(1, 0, 2, 1), peakRates: undefined, peakScheduleId: undefined };
     expect(selectBillingRule({ ...settings, customRules: [custom] }, sample("2026-08-18T10:00:00+08:00"))?.id).toBe("custom");
     expect(selectBillingRule({ ...settings, customRules: [custom] }, sample("2026-08-21T10:00:00+08:00"))?.id).toBe("official");
+  });
+
+  it("binds a custom route to official pricing and restores without rewriting history", () => {
+    const bound = { ...settings, providerBindings: [{ provider: "my-deepseek", catalogProvider: "deepseek-official" }] };
+    const routed = { ...sample("2026-08-18T10:00:00+08:00"), provider: "my-deepseek" };
+    expect(selectBillingRule(bound, routed)?.mode).toBe("official");
+    const custom = { ...settings.catalog.rules[0]!, id: "custom-route", provider: "my-deepseek", mode: "custom" as const, effectiveFrom: "2026-08-18T00:00:00+08:00", effectiveTo: undefined, peakRates: undefined, peakScheduleId: undefined };
+    const restored = restoreOfficialBilling({ ...bound, customRules: [custom] }, "my-deepseek", custom.model, Date.parse("2026-08-19T00:00:00+08:00"));
+    expect(restored.customRules[0]?.effectiveTo).toBe("2026-08-18T16:00:00.000Z");
+    expect(selectBillingRule(restored, { ...routed, time: Date.parse("2026-08-18T12:00:00+08:00") })?.id).toBe("custom-route");
+    expect(selectBillingRule(restored, { ...routed, time: Date.parse("2026-08-19T00:01:00+08:00") })?.mode).toBe("official");
   });
 
   it("derives rule status from the same selector used for pricing", () => {

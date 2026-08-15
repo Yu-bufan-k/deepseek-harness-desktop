@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { UpdateChannel } from "../shared/contracts.js";
+import type { UpdateChannel, VisionSettings } from "../shared/contracts.js";
 import type { BillingSettings } from "../shared/billing.js";
 
 export interface DesktopSettings {
@@ -11,6 +11,7 @@ export interface DesktopSettings {
   pendingVersion: string | null;
   failedStarts: number;
   billing?: BillingSettings;
+  vision?: VisionSettings;
 }
 
 const defaults: DesktopSettings = {

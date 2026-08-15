@@ -6,6 +6,7 @@ import log from "electron-log/main.js";
 import {
   IPC,
   type BillingModelTarget,
+  type DeepSeekBalanceSnapshot,
   type DesktopInfo,
   type HarnessUpdateState,
   type HarnessInfo,
@@ -15,7 +16,7 @@ import {
   type UpdateChannel,
   type UpdateState
 } from "../shared/contracts.js";
-import { billingSettingsSnapshot, BillingUsageSummarizer, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample, type BillingUsageSync } from "../shared/billing.js";
+import { billingSettingsSnapshot, BillingUsageSummarizer, decimalBillingAmountToNanos, formatDecimalBillingMoney, restoreOfficialBilling, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample, type BillingUsageSync } from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -28,6 +29,10 @@ import { writeDesktopOverlay } from "./desktop-overlay.js";
 import { resolveLaunchDirectories } from "./launch-paths.js";
 import { BillingStore } from "./billing-store.js";
 import { checkHarnessUpdate as fetchHarnessUpdate } from "./harness-update-checker.js";
+import { DeepSeekBalanceService } from "./deepseek-balance.js";
+import { readHarnessCredential } from "./harness-credential-reader.js";
+import { ChangeSetService } from "./change-set-service.js";
+import { VisionService } from "./vision-service.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
@@ -36,12 +41,17 @@ const windows = new Set<BrowserWindow>();
 const integrationReadyWindows = new WeakSet<BrowserWindow>();
 const pendingWorkspaceOpens = new Map<string, OpenWorkspaceRequest & { sentTo: number | null }>();
 const earlyOpenPaths: string[] = [];
-let settingsWindow: BrowserWindow | null = null;
+let workbenchWindow: BrowserWindow | null = null;
 let billingWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+const workspaceContexts = new Map<number, { sessionId: string; path: string; windowId: number }>();
+let activeWorkspaceContext: { sessionId: string; path: string; windowId: number } | null = null;
 let harness: HarnessManager;
 let settings: SettingsStore;
 let credentials: CredentialStore;
+let deepSeekBalance: DeepSeekBalanceService;
+let changeSets: ChangeSetService;
+let vision: VisionService;
 let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
@@ -118,6 +128,7 @@ function currentInfo(): DesktopInfo {
     themePreference: themeStore.getPreference(),
     userDataPath: app.getPath("userData"),
     workspacePath: value.workspacePath,
+    activeWorkspacePath: activeWorkspaceContext?.path ?? null,
     logsPath: app.getPath("logs"),
     unofficialNotice: UNOFFICIAL_NOTICE
   };
@@ -149,9 +160,26 @@ function broadcastBilling(): void {
   }
 }
 
+async function deepSeekBalanceSnapshot(force = false): Promise<DeepSeekBalanceSnapshot> {
+  const snapshot = await deepSeekBalance.get(force);
+  const warning = billing.get().balanceWarning;
+  return {
+    ...snapshot,
+    balances: snapshot.balances.map((entry) => {
+      const threshold = warning.enabled ? warning.thresholds[entry.currency] : null;
+      return {
+        ...entry,
+        warningThreshold: threshold,
+        warningThresholdDisplay: threshold ? formatDecimalBillingMoney(entry.currency, threshold) : null,
+        warning: threshold !== null && decimalBillingAmountToNanos(entry.totalBalance) <= decimalBillingAmountToNanos(threshold)
+      };
+    })
+  };
+}
+
 function secureWindow(window: BrowserWindow, harnessOrigin?: string): void {
   const allowNavigation = (target: string): boolean => {
-    if (target.startsWith("file://") && (target.includes("/settings.html") || target.includes("/billing.html") || target.includes("/splash.html"))) return true;
+    if (target.startsWith("file://") && (target.includes("/settings.html") || target.includes("/billing.html") || target.includes("/splash.html") || target.includes("/workbench/index.html"))) return true;
     if (!harnessOrigin) return false;
     try { return new URL(target).origin === harnessOrigin; } catch { return false; }
   };
@@ -187,13 +215,23 @@ async function createHarnessWindow(readyInfo?: HarnessInfo, show = true): Promis
     }
   });
   windows.add(window);
+  window.on("focus", () => {
+    activeWorkspaceContext = workspaceContexts.get(window.id) ?? null;
+    broadcastInfo();
+  });
   window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
     if (isMainFrame) integrationReadyWindows.delete(window);
   });
   window.on("closed", () => {
     windows.delete(window);
+    workspaceContexts.delete(window.id);
+    if (activeWorkspaceContext?.windowId === window.id) activeWorkspaceContext = null;
     for (const request of pendingWorkspaceOpens.values()) {
       if (request.sentTo === window.id) request.sentTo = null;
+    }
+    if (windows.size === 0 && !quitting) {
+      if (workbenchWindow && !workbenchWindow.isDestroyed()) workbenchWindow.destroy();
+      if (billingWindow && !billingWindow.isDestroyed()) billingWindow.destroy();
     }
   });
   secureWindow(window, origin);
@@ -272,28 +310,7 @@ async function retryStartup(): Promise<HarnessInfo> {
 }
 
 async function showSettings(): Promise<void> {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show();
-    settingsWindow.focus();
-    return;
-  }
-  settingsWindow = new BrowserWindow({
-    width: 820,
-    height: 760,
-    minWidth: 680,
-    minHeight: 560,
-    icon: appIconPath(),
-    title: `${PRODUCT_NAME} 设置`,
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  });
-  secureWindow(settingsWindow);
-  settingsWindow.on("closed", () => { settingsWindow = null; });
-  await settingsWindow.loadFile(rendererPath("settings.html"));
+  await showWorkbench("settings");
   if (harnessUpdate.phase === "idle") void checkHarnessVersion();
 }
 
@@ -360,30 +377,47 @@ function billingTarget(value: unknown): BillingModelTarget | undefined {
 }
 
 async function showBilling(target?: BillingModelTarget): Promise<void> {
+  if (target) await showLegacyBilling(target);
+  else await showWorkbench("billing");
+}
+
+async function showLegacyBilling(target?: BillingModelTarget): Promise<void> {
   if (billingWindow && !billingWindow.isDestroyed()) {
-    billingWindow.show();
-    billingWindow.focus();
+    billingWindow.show(); billingWindow.focus();
     if (target) billingWindow.webContents.send(IPC.billingEditRequested, target);
     return;
   }
-  billingWindow = new BrowserWindow({
-    width: 940,
-    height: 800,
-    minWidth: 720,
-    minHeight: 620,
-    icon: appIconPath(),
-    title: `${PRODUCT_NAME} 用量与费用`,
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
+  const window = new BrowserWindow({
+    width: 940, height: 800, minWidth: 720, minHeight: 620, icon: appIconPath(), title: `${PRODUCT_NAME} 用量与费用`,
+    webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  secureWindow(billingWindow);
-  billingWindow.on("closed", () => { billingWindow = null; });
-  await billingWindow.loadFile(rendererPath("billing.html"));
-  if (target && billingWindow && !billingWindow.isDestroyed()) billingWindow.webContents.send(IPC.billingEditRequested, target);
+  billingWindow = window; secureWindow(window);
+  window.on("closed", () => { if (billingWindow === window) billingWindow = null; });
+  await window.loadFile(rendererPath("billing.html"));
+  if (target && !window.isDestroyed()) window.webContents.send(IPC.billingEditRequested, target);
+}
+
+type WorkbenchView = "changes" | "billing" | "vision" | "settings";
+const workbenchViews = new Set<WorkbenchView>(["changes", "billing", "vision", "settings"]);
+
+async function showWorkbench(view: WorkbenchView = "changes", billingTargetValue?: BillingModelTarget): Promise<void> {
+  if (workbenchWindow && !workbenchWindow.isDestroyed()) {
+    workbenchWindow.show(); workbenchWindow.focus();
+    workbenchWindow.webContents.send(IPC.workbenchNavigate, view);
+    if (billingTargetValue) workbenchWindow.webContents.send(IPC.billingEditRequested, billingTargetValue);
+    return;
+  }
+  workbenchWindow = new BrowserWindow({
+    width: 1380, height: 860, minWidth: 860, minHeight: 600,
+    autoHideMenuBar: true,
+    icon: appIconPath(), title: `审阅与工具 · ${PRODUCT_NAME}`, backgroundColor: "#f7f8fa",
+    webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true }
+  });
+  secureWindow(workbenchWindow);
+  workbenchWindow.setMenuBarVisibility(false);
+  workbenchWindow.on("closed", () => { workbenchWindow = null; });
+  await workbenchWindow.loadFile(rendererPath(path.join("workbench", "index.html")), { query: { view } });
+  if (billingTargetValue && workbenchWindow && !workbenchWindow.isDestroyed()) workbenchWindow.webContents.send(IPC.billingEditRequested, billingTargetValue);
 }
 
 async function checkHarnessVersion(): Promise<HarnessUpdateState> {
@@ -437,7 +471,6 @@ function installMenu(): void {
       label: "文件",
       submenu: [
         { label: "新建窗口", accelerator: "CmdOrCtrl+N", click: () => void createHarnessWindow() },
-        { label: "选择工作区…", click: () => void chooseWorkspace() },
         { type: "separator" },
         { role: "quit", label: "退出" }
       ]
@@ -452,6 +485,8 @@ function installMenu(): void {
     {
       label: "应用",
       submenu: [
+        { label: "打开工作台", accelerator: "CmdOrCtrl+Shift+E", click: () => void showWorkbench("changes") },
+        { type: "separator" },
         { label: "设置…", accelerator: "CmdOrCtrl+,", click: () => void showSettings() },
         { label: "用量与费用", accelerator: "CmdOrCtrl+Shift+U", click: () => void showBilling() },
         { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
@@ -506,7 +541,7 @@ async function restartHarness(): Promise<HarnessInfo> {
 
 function assertTrustedIpc(event: IpcMainInvokeEvent): void {
   const sender = event.senderFrame?.url ?? "";
-  let trusted = sender.startsWith("file://") && (sender.includes("/settings.html") || sender.includes("/billing.html") || sender.includes("/splash.html"));
+  let trusted = sender.startsWith("file://") && (sender.includes("/settings.html") || sender.includes("/billing.html") || sender.includes("/splash.html") || sender.includes("/workbench/index.html"));
   try {
     const url = new URL(sender);
     trusted ||= url.hostname === "127.0.0.1" && url.protocol === "http:";
@@ -524,6 +559,11 @@ function registerIpc(): void {
   handle(IPC.openLogs, async () => { await shell.openPath(app.getPath("logs")); });
   handle(IPC.openSettings, () => showSettings());
   handle(IPC.openBilling, (_event, target?: unknown) => showBilling(billingTarget(target)));
+  handle(IPC.openLegacyBilling, (_event, target?: unknown) => showLegacyBilling(billingTarget(target)));
+  handle(IPC.openWorkbench, (_event, value?: unknown) => {
+    const view = typeof value === "string" && workbenchViews.has(value as WorkbenchView) ? value as WorkbenchView : "changes";
+    return showWorkbench(view);
+  });
   handle(IPC.checkUpdate, () => updates.check());
   handle(IPC.checkHarnessUpdate, () => checkHarnessVersion());
   handle(IPC.downloadUpdate, () => updates.download());
@@ -549,9 +589,23 @@ function registerIpc(): void {
     syncThemeFromHarness();
     return preference;
   });
-  handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); });
+  handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate(); });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
-  handle(IPC.removeCredential, (_event, name: string) => credentials.remove(name));
+  handle(IPC.removeCredential, async (_event, name: string) => { await credentials.remove(name); if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate(); });
+  handle(IPC.getDeepSeekBalance, () => deepSeekBalanceSnapshot());
+  handle(IPC.refreshDeepSeekBalance, () => deepSeekBalanceSnapshot(true));
+  handle(IPC.useOfficialBilling, async (_event, targetValue: unknown, catalogProviderValue: unknown) => {
+    const target = billingTarget(targetValue);
+    if (!target || typeof catalogProviderValue !== "string") throw new Error("无效的官方价格目标");
+    const current = billing.get();
+    const catalogProvider = catalogProviderValue.trim();
+    if (!current.catalog.rules.some((rule) => rule.provider.toLowerCase() === catalogProvider.toLowerCase() && rule.model.toLowerCase() === target.model.toLowerCase())) throw new Error("官方价格清单中没有这个模型");
+    const providerBindings = current.providerBindings.filter((binding) => binding.provider.toLowerCase() !== target.provider.toLowerCase());
+    if (target.provider.toLowerCase() !== catalogProvider.toLowerCase()) providerBindings.push({ provider: target.provider, catalogProvider });
+    const saved = await billing.saveUserSettings({ ...restoreOfficialBilling(current, target.provider, target.model), providerBindings });
+    broadcastBilling();
+    return billingSettingsSnapshot(saved);
+  });
   handle(IPC.getBillingSettings, () => billingSettingsSnapshot(billing.get()));
   handle(IPC.setBillingSettings, async (_event, value: BillingSettings) => {
     const saved = await billing.saveUserSettings(value);
@@ -572,6 +626,53 @@ function registerIpc(): void {
     broadcastBillingUsage();
     return billingUsageReport;
   });
+  const checkedText = (value: unknown, label: string, max = 500): string => {
+    if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${label}无效`);
+    return value.trim();
+  };
+  const broadcastChangeBatches = async () => {
+    const batches = await changeSets.list();
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send(IPC.changeBatchesChanged, batches);
+    return batches;
+  };
+  handle(IPC.setActiveWorkspaceContext, async (event, sessionValue: unknown, workspaceValue: unknown) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || !windows.has(senderWindow)) throw new Error("只能由 Harness 会话更新工作区上下文");
+    const sessionId = checkedText(sessionValue, "会话 ID", 200);
+    if (workspaceValue === null) {
+      workspaceContexts.delete(senderWindow.id);
+      if (activeWorkspaceContext?.windowId === senderWindow.id) activeWorkspaceContext = null;
+    } else {
+      const workspace = path.resolve(checkedText(workspaceValue, "工作区", 2_000));
+      const context = { sessionId, path: workspace, windowId: senderWindow.id };
+      workspaceContexts.set(senderWindow.id, context);
+      if (senderWindow.isFocused() || activeWorkspaceContext?.windowId === senderWindow.id || !activeWorkspaceContext) activeWorkspaceContext = context;
+    }
+    broadcastInfo();
+  });
+  handle(IPC.createChangeBatch, async (_event, titleValue: unknown) => {
+    const workspace = activeWorkspaceContext?.path;
+    if (!workspace) throw new Error("请先在 Harness 中打开一个带工作区的对话");
+    const batch = await changeSets.create(checkedText(titleValue, "任务标题", 240), workspace);
+    await broadcastChangeBatches(); return batch;
+  });
+  handle(IPC.closeChangeBatch, async (_event, idValue: unknown) => { const batch = await changeSets.close(checkedText(idValue, "批次 ID", 120)); await broadcastChangeBatches(); return batch; });
+  handle(IPC.listChangeBatches, () => changeSets.list());
+  handle(IPC.getFileDiff, (_event, idValue: unknown, fileValue: unknown) => changeSets.diff(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000)));
+  handle(IPC.markChangeReviewed, async (_event, idValue: unknown, fileValue: unknown, hunkValue?: unknown) => {
+    const value = await changeSets.markReviewed(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000), hunkValue === undefined ? undefined : checkedText(hunkValue, "代码块 ID", 120));
+    await broadcastChangeBatches(); return value;
+  });
+  handle(IPC.revertChangeFile, async (_event, idValue: unknown, fileValue: unknown) => { const value = await changeSets.revertFile(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000)); await broadcastChangeBatches(); return value; });
+  handle(IPC.revertChangeHunk, async (_event, idValue: unknown, fileValue: unknown, hunkValue: unknown) => { const value = await changeSets.revertHunk(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000), checkedText(hunkValue, "代码块 ID", 120)); await broadcastChangeBatches(); return value; });
+  handle(IPC.getVisionSettings, () => vision.getSettings());
+  handle(IPC.setVisionSettings, (_event, value: unknown) => vision.setSettings(value as never));
+  handle(IPC.discoverVisionTools, (_event, value: unknown) => vision.discoverTools(value as never));
+  handle(IPC.testVisionBackend, (_event, value: unknown) => vision.testBackend(value as never));
+  handle(IPC.analyzeVision, (_event, value: unknown) => vision.analyze(value as never));
+  handle(IPC.cancelVision, (_event, requestId: unknown) => { vision.cancel(checkedText(requestId, "请求 ID", 120)); });
+  handle(IPC.getCachedVision, (_event, value: unknown) => vision.cached(value as never));
+  handle(IPC.listVisionAttachments, (_event, value?: unknown) => vision.listAttachments(value === undefined ? undefined : checkedText(value, "会话 ID", 240)));
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
     try { assertTrustedIpc(event); } catch { return; }
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -662,6 +763,9 @@ void app.whenReady().then(async () => {
   await billing.load();
   billingUsageReport = billingUsageSummarizer.summarize(billing.get(), billingUsageIndex, new Date().toISOString());
   credentials = new CredentialStore(userData);
+  changeSets = new ChangeSetService(userData);
+  vision = new VisionService(settings, credentials, userData);
+  deepSeekBalance = new DeepSeekBalanceService({ credential: async () => await credentials.get("DEEPSEEK_API_KEY") ?? await readHarnessCredential(path.join(userData, "dsh"), "DEEPSEEK_API_KEY") });
   updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
   directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);
   const bridgeInfo = await directoryPickerBridge.start();

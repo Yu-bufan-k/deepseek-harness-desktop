@@ -54,6 +54,14 @@ describe("BillingStore", () => {
     expect(() => assertAppendOnlyCatalog(current, { ...catalog("2026-08-15T00:00:00Z"), rules: [{ ...current.rules[0]!, label: "Renamed" }] })).not.toThrow();
   });
 
+  it("treats an inferred successor boundary and the same explicit effectiveTo as identical economics", () => {
+    const current = catalog();
+    current.rules.push({ ...current.rules[0]!, id: "v2", effectiveFrom: "2026-08-17T00:00:00Z" });
+    const remote = structuredClone(current);
+    remote.rules[0]!.effectiveTo = "2026-08-17T00:00:00Z";
+    expect(() => assertAppendOnlyCatalog(current, remote)).not.toThrow();
+  });
+
   it("does not let renderer settings replace the official catalog", async () => {
     const { root, settings, publicKeyPem } = await fixture();
     const store = new BillingStore(settings, root, { publicKeyPem }); await store.load();
@@ -64,12 +72,29 @@ describe("BillingStore", () => {
     expect(saved.lastCheckedAt).toBe(before.lastCheckedAt);
   });
 
+  it("normalizes provider bindings and rejects duplicate routes", async () => {
+    const { root, settings, publicKeyPem } = await fixture();
+    const store = new BillingStore(settings, root, { publicKeyPem }); await store.load();
+    const saved = await store.saveUserSettings({ ...store.get(), providerBindings: [{ provider: " custom-route ", catalogProvider: " deepseek-official " }] });
+    expect(saved.providerBindings).toEqual([{ provider: "custom-route", catalogProvider: "deepseek-official" }]);
+    await expect(store.saveUserSettings({ ...saved, providerBindings: [...saved.providerBindings, { provider: "CUSTOM-ROUTE", catalogProvider: "other" }] })).rejects.toThrow(/重复路由/);
+  });
+
+  it("migrates and validates balance warning settings", async () => {
+    const { root, settings, publicKeyPem } = await fixture();
+    const store = new BillingStore(settings, root, { publicKeyPem }); await store.load();
+    expect(store.get().balanceWarning).toEqual({ enabled: false, thresholds: { CNY: "10", USD: "2" } });
+    const saved = await store.saveUserSettings({ ...store.get(), balanceWarning: { enabled: true, thresholds: { CNY: "5.5", USD: "1" } } });
+    expect(saved.balanceWarning.enabled).toBe(true);
+    await expect(store.saveUserSettings({ ...saved, balanceWarning: { enabled: true, thresholds: { CNY: "-1", USD: "1" } } })).rejects.toThrow(/CNY/);
+  });
+
   it("uses a signed fallback source and preserves append-only history", async () => {
     const { root, settings, keys, publicKeyPem } = await fixture();
     const next = catalog("2026-08-15T00:00:00Z"); next.rules.push({ ...next.rules[0]!, id: "v2", effectiveFrom: "2026-09-01T00:00:00Z", rates: { ...rates, output: 3 } });
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response("down", { status: 503 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(envelope(next, keys.privateKey)), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ encoding: "base64", content: Buffer.from(JSON.stringify(envelope(next, keys.privateKey))).toString("base64") }), { status: 200 }));
     const store = new BillingStore(settings, root, { publicKeyPem, remoteUrls: ["https://primary.test/catalog", "https://fallback.test/catalog"], fetcher });
     await store.load();
     const result = await store.checkForUpdates();
@@ -82,8 +107,21 @@ describe("BillingStore", () => {
     const { root, settings, publicKeyPem } = await fixture();
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ algorithm: "Ed25519", keyId: "bad", catalog: catalog("2027-01-01T00:00:00Z"), signature: Buffer.alloc(64).toString("base64") }), { status: 200 }));
     const store = new BillingStore(settings, root, { publicKeyPem, remoteUrls: ["https://bad.test/catalog"], fetcher }); await store.load();
-    await expect(store.checkForUpdates()).rejects.toThrow(/本地价格/);
+    const result = await store.checkForUpdates();
+    expect(result.updated).toBe(false);
+    expect(result.message).toMatch(/内置签名价格仍可正常计费/);
     expect(store.get().catalog.publishedAt).toBe(catalog().publishedAt);
+  });
+
+  it("returns a safe fallback result instead of throwing when a signed update rewrites history", async () => {
+    const { root, settings, keys, publicKeyPem } = await fixture();
+    const changed = catalog("2026-08-15T00:00:00Z"); changed.rules[0]!.rates.output = 99;
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(envelope(changed, keys.privateKey)), { status: 200 }));
+    const store = new BillingStore(settings, root, { publicKeyPem, remoteUrls: ["https://signed.test/catalog"], fetcher }); await store.load();
+    const result = await store.checkForUpdates();
+    expect(result.updated).toBe(false);
+    expect(result.errorSummary).toMatch(/删除或修改历史规则/);
+    expect(store.get().catalog.rules[0]!.rates.output).toBe(2);
   });
 
   it("recovers defaults while retaining only valid custom rules", async () => {

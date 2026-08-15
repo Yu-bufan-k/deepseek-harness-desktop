@@ -44,6 +44,14 @@ export class CredentialStore {
     return Boolean((await this.read())[name]);
   }
 
+  async get(name: string): Promise<string | null> {
+    this.validateName(name);
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    const encoded = (await this.read())[name];
+    if (!encoded) return null;
+    try { return safeStorage.decryptString(Buffer.from(encoded, "base64")); } catch { return null; }
+  }
+
   async remove(name: string): Promise<void> {
     this.validateName(name);
     const credentials = await this.read();

@@ -7,7 +7,11 @@ import {
   type OpenWorkspaceRequest,
   type OpenWorkspaceResult,
   type ThemePreference,
-  type UpdateChannel
+  type UpdateChannel,
+  type VisionBackendConfig,
+  type VisionRequest,
+  type VisionSettings,
+  type ChangeBatch
 } from "../shared/contracts.js";
 import type { BillingSettings, BillingSettingsSnapshot, BillingUsageReport, BillingUsageSync } from "../shared/billing.js";
 
@@ -32,6 +36,8 @@ const api: DesktopApi = {
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
   openSettings: () => ipcRenderer.invoke(IPC.openSettings),
   openBilling: (target?: BillingModelTarget) => ipcRenderer.invoke(IPC.openBilling, target),
+  openLegacyBilling: (target?: BillingModelTarget) => ipcRenderer.invoke(IPC.openLegacyBilling, target),
+  openWorkbench: (view = "changes") => ipcRenderer.invoke(IPC.openWorkbench, view),
   checkUpdate: () => ipcRenderer.invoke(IPC.checkUpdate),
   checkHarnessUpdate: () => ipcRenderer.invoke(IPC.checkHarnessUpdate),
   downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
@@ -43,6 +49,9 @@ const api: DesktopApi = {
   setCredential: (name: string, value: string) => ipcRenderer.invoke(IPC.setCredential, name, value),
   hasCredential: (name: string) => ipcRenderer.invoke(IPC.hasCredential, name),
   removeCredential: (name: string) => ipcRenderer.invoke(IPC.removeCredential, name),
+  getDeepSeekBalance: () => ipcRenderer.invoke(IPC.getDeepSeekBalance),
+  refreshDeepSeekBalance: () => ipcRenderer.invoke(IPC.refreshDeepSeekBalance),
+  useOfficialBilling: (target: BillingModelTarget, catalogProvider: string) => ipcRenderer.invoke(IPC.useOfficialBilling, target, catalogProvider),
   getBillingSettings: () => ipcRenderer.invoke(IPC.getBillingSettings),
   setBillingSettings: (settings: BillingSettings) => ipcRenderer.invoke(IPC.setBillingSettings, settings),
   checkBillingPrices: () => ipcRenderer.invoke(IPC.checkBillingPrices),
@@ -72,6 +81,32 @@ const api: DesktopApi = {
     const handler = () => listener();
     ipcRenderer.on(IPC.splashReady, handler);
     return () => ipcRenderer.removeListener(IPC.splashReady, handler);
+  },
+  setActiveWorkspaceContext: (sessionId: string, workspacePath: string | null) => ipcRenderer.invoke(IPC.setActiveWorkspaceContext, sessionId, workspacePath),
+  createChangeBatch: (title: string) => ipcRenderer.invoke(IPC.createChangeBatch, title),
+  closeChangeBatch: (batchId: string) => ipcRenderer.invoke(IPC.closeChangeBatch, batchId),
+  listChangeBatches: () => ipcRenderer.invoke(IPC.listChangeBatches),
+  getFileDiff: (batchId: string, filePath: string) => ipcRenderer.invoke(IPC.getFileDiff, batchId, filePath),
+  markChangeReviewed: (batchId: string, filePath: string, hunkId?: string) => ipcRenderer.invoke(IPC.markChangeReviewed, batchId, filePath, hunkId),
+  revertChangeFile: (batchId: string, filePath: string) => ipcRenderer.invoke(IPC.revertChangeFile, batchId, filePath),
+  revertChangeHunk: (batchId: string, filePath: string, hunkId: string) => ipcRenderer.invoke(IPC.revertChangeHunk, batchId, filePath, hunkId),
+  onChangeBatchesChanged: (listener: (batches: ChangeBatch[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, batches: ChangeBatch[]) => listener(batches);
+    ipcRenderer.on(IPC.changeBatchesChanged, handler);
+    return () => ipcRenderer.removeListener(IPC.changeBatchesChanged, handler);
+  },
+  getVisionSettings: () => ipcRenderer.invoke(IPC.getVisionSettings),
+  setVisionSettings: (value: VisionSettings) => ipcRenderer.invoke(IPC.setVisionSettings, value),
+  discoverVisionTools: (backend: VisionBackendConfig) => ipcRenderer.invoke(IPC.discoverVisionTools, backend),
+  testVisionBackend: (backend: VisionBackendConfig) => ipcRenderer.invoke(IPC.testVisionBackend, backend),
+  analyzeVision: (request: VisionRequest) => ipcRenderer.invoke(IPC.analyzeVision, request),
+  cancelVision: (requestId: string) => ipcRenderer.invoke(IPC.cancelVision, requestId),
+  getCachedVision: (request: VisionRequest) => ipcRenderer.invoke(IPC.getCachedVision, request),
+  listVisionAttachments: (sessionId?: string) => ipcRenderer.invoke(IPC.listVisionAttachments, sessionId),
+  onWorkbenchNavigate: (listener: (view: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, view: string) => listener(view);
+    ipcRenderer.on(IPC.workbenchNavigate, handler);
+    return () => ipcRenderer.removeListener(IPC.workbenchNavigate, handler);
   }
 };
 

@@ -33,15 +33,29 @@ export interface BillingCatalog {
   rules: BillingPriceRule[];
 }
 
+export interface BillingProviderBinding {
+  /** Harness provider route chosen by the user. */
+  provider: string;
+  /** Provider id used by the signed price catalog. */
+  catalogProvider: string;
+}
+
+export interface BillingBalanceWarningSettings {
+  enabled: boolean;
+  thresholds: Record<"CNY" | "USD", string>;
+}
+
 export interface BillingSettings {
   autoUpdate: boolean;
   checkIntervalHours: number;
   lastCheckedAt: string | null;
   catalog: BillingCatalog;
   customRules: BillingPriceRule[];
+  providerBindings: BillingProviderBinding[];
+  balanceWarning: BillingBalanceWarningSettings;
 }
 
-export interface BillingUpdateResult { updated: boolean; checkedAt: string; settings: BillingSettings; message: string; }
+export interface BillingUpdateResult { updated: boolean; checkedAt: string; settings: BillingSettings; message: string; errorSummary?: string; }
 export type BillingRuleStatus = "future" | "active" | "overridden" | "expired" | "historical";
 export interface BillingSettingsSnapshot extends BillingSettings { ruleStatuses: Record<string, BillingRuleStatus>; }
 
@@ -85,6 +99,7 @@ export interface BillingModelUsageSummary {
   unpricedRequests: number;
   totals: BillingMoney[];
   currentPricing: BillingResolvedPrice | null;
+  officialPricing: BillingResolvedPrice | null;
 }
 
 export interface BillingSessionUsageSummary {
@@ -113,7 +128,7 @@ export interface BillingUsageReport {
   unpricedRequests: number;
   totals: BillingMoney[];
   sessions: BillingSessionUsageSummary[];
-  currentTarget: { provider: string; model: string; pricing: BillingResolvedPrice | null } | null;
+  currentTarget: { provider: string; model: string; pricing: BillingResolvedPrice | null; officialPricing: BillingResolvedPrice | null } | null;
   warnings: string[];
 }
 
@@ -140,8 +155,9 @@ export function billingMinuteAt(time: number, timezone: string): number {
 
 export function selectBillingRule(settings: BillingSettings, sample: BillingUsageSample): BillingPriceRule | null {
   const provider = normalize(sample.provider), model = normalize(sample.model);
-  const candidates = [...settings.catalog.rules, ...settings.customRules]
-    .filter((rule) => normalize(rule.provider) === provider && normalize(rule.model) === model)
+  const catalogProvider = normalize(settings.providerBindings?.find((binding) => normalize(binding.provider) === provider)?.catalogProvider ?? sample.provider);
+  const candidates = [...settings.catalog.rules.filter((rule) => normalize(rule.provider) === catalogProvider), ...settings.customRules.filter((rule) => normalize(rule.provider) === provider)]
+    .filter((rule) => normalize(rule.model) === model)
     .filter((rule) => Date.parse(rule.effectiveFrom) <= sample.time)
     .filter((rule) => rule.effectiveTo === undefined || sample.time < Date.parse(rule.effectiveTo))
     .sort((left, right) => {
@@ -150,6 +166,26 @@ export function selectBillingRule(settings: BillingSettings, sample: BillingUsag
       return Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom) || right.id.localeCompare(left.id);
     });
   return candidates[0] ?? null;
+}
+
+export function officialBillingRule(settings: BillingSettings, provider: string, model: string, at = Date.now()): BillingPriceRule | null {
+  const normalizedProvider = normalize(provider), normalizedModel = normalize(model);
+  const catalogProvider = normalize(settings.providerBindings?.find((binding) => normalize(binding.provider) === normalizedProvider)?.catalogProvider ?? provider);
+  return settings.catalog.rules
+    .filter((rule) => normalize(rule.provider) === catalogProvider && normalize(rule.model) === normalizedModel)
+    .filter((rule) => Date.parse(rule.effectiveFrom) <= at && (rule.effectiveTo === undefined || at < Date.parse(rule.effectiveTo)))
+    .sort((left, right) => Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom) || right.id.localeCompare(left.id))[0] ?? null;
+}
+
+export function restoreOfficialBilling(settings: BillingSettings, provider: string, model: string, at = Date.now()): BillingSettings {
+  const targetProvider = normalize(provider), targetModel = normalize(model);
+  const effectiveTo = new Date(at).toISOString();
+  const customRules = settings.customRules.flatMap((rule) => {
+    if (normalize(rule.provider) !== targetProvider || normalize(rule.model) !== targetModel || (rule.effectiveTo && Date.parse(rule.effectiveTo) <= at)) return [rule];
+    if (Date.parse(rule.effectiveFrom) >= at) return [];
+    return [{ ...rule, effectiveTo }];
+  });
+  return { ...settings, customRules };
 }
 
 export function billingRuleStatus(settings: BillingSettings, rule: BillingPriceRule, at = Date.now()): BillingRuleStatus {
@@ -204,6 +240,11 @@ export function resolveBillingPrice(settings: BillingSettings, provider: string,
   return rule ? { rule, ...resolveRates(settings, rule, time) } : null;
 }
 
+export function resolveOfficialBillingPrice(settings: BillingSettings, provider: string, model: string, time: number): BillingResolvedPrice | null {
+  const rule = officialBillingRule(settings, provider, model, time);
+  return rule ? { rule, ...resolveRates(settings, rule, time) } : null;
+}
+
 export function calculateBillingCost(settings: BillingSettings, sample: BillingUsageSample): BillingCostLine {
   const rule = selectBillingRule(settings, sample);
   if (!rule) return { ...sample, ruleId: null, currency: null, amountNanos: null };
@@ -243,13 +284,25 @@ export function formatBillingMoney(currency: string, nanosValue: string, locale 
   }).join("");
 }
 
+export function decimalBillingAmountToNanos(value: string): bigint {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) throw new Error("金额格式无效");
+  const fraction = match[2] ?? "";
+  if (fraction.length > 9) throw new Error("金额最多支持 9 位小数");
+  return BigInt(match[1]!) * 1_000_000_000n + BigInt(fraction.padEnd(9, "0") || "0");
+}
+
+export function formatDecimalBillingMoney(currency: string, value: string, locale = "zh-CN"): string {
+  return formatBillingMoney(currency, decimalBillingAmountToNanos(value).toString(), locale);
+}
+
 const moneyList = (totals: Map<string, bigint>): BillingMoney[] => [...totals]
   .sort(([left], [right]) => left.localeCompare(right))
   .map(([currency, nanos]) => ({ currency, nanos: nanos.toString(), display: formatBillingMoney(currency, nanos.toString()) }));
 
 function summarizeSession(settings: BillingSettings, session: BillingSessionUsage): BillingSessionUsageSummary {
   const sessionTotals = new Map<string, bigint>();
-  const models = new Map<string, { summary: Omit<BillingModelUsageSummary, "totals" | "currentPricing">; totals: Map<string, bigint> }>();
+  const models = new Map<string, { summary: Omit<BillingModelUsageSummary, "totals" | "currentPricing" | "officialPricing">; totals: Map<string, bigint> }>();
   let inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, outputTokens = 0, unpricedRequests = 0, latestTime = 0;
   for (const sample of session.samples) {
     latestTime = Math.max(latestTime, sample.time);
@@ -269,11 +322,11 @@ function summarizeSession(settings: BillingSettings, session: BillingSessionUsag
   return {
     sessionId: session.sessionId, title: session.title, requests: session.samples.length, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens,
     unpricedRequests, lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null, totals: moneyList(sessionTotals),
-    models: [...models.values()].map(({ summary, totals }) => ({ ...summary, totals: moneyList(totals), currentPricing: null }))
+    models: [...models.values()].map(({ summary, totals }) => ({ ...summary, totals: moneyList(totals), currentPricing: null, officialPricing: null }))
   };
 }
 
-const settingsCacheKey = (settings: BillingSettings): string => JSON.stringify({ catalog: settings.catalog, customRules: settings.customRules });
+const settingsCacheKey = (settings: BillingSettings): string => JSON.stringify({ catalog: settings.catalog, customRules: settings.customRules, providerBindings: settings.providerBindings });
 
 export class BillingUsageSummarizer {
   private settingsKey = "";
@@ -292,7 +345,7 @@ export class BillingUsageSummarizer {
         cached = { revision: session.revision, title: session.title, summary: summarizeSession(settings, session) };
         this.sessionCache.set(session.sessionId, cached); this.misses += 1;
       } else this.hits += 1;
-      return { ...cached.summary, models: cached.summary.models.map((model) => ({ ...model, currentPricing: resolveBillingPrice(settings, model.provider, model.model, at) })) };
+      return { ...cached.summary, models: cached.summary.models.map((model) => ({ ...model, currentPricing: resolveBillingPrice(settings, model.provider, model.model, at), officialPricing: resolveOfficialBillingPrice(settings, model.provider, model.model, at) })) };
     });
     const totals = new Map<string, bigint>();
     let requests = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, outputTokens = 0, unpricedRequests = 0, latestTime = 0;
@@ -305,7 +358,7 @@ export class BillingUsageSummarizer {
     return {
       syncedAt, collectedAt: index.collectedAt, lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null, requests, inputTokens, cacheReadTokens,
       cacheWriteTokens, outputTokens, unpricedRequests, totals: moneyList(totals), sessions,
-      currentTarget: currentTarget ? { ...currentTarget, pricing: resolveBillingPrice(settings, currentTarget.provider, currentTarget.model, at) } : null,
+      currentTarget: currentTarget ? { ...currentTarget, pricing: resolveBillingPrice(settings, currentTarget.provider, currentTarget.model, at), officialPricing: resolveOfficialBillingPrice(settings, currentTarget.provider, currentTarget.model, at) } : null,
       warnings: [...warnings]
     };
   }

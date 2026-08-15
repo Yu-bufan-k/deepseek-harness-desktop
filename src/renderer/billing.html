@@ -31,6 +31,20 @@
     .usage-amount { margin-top: 5px; font-size: 25px; font-weight: 640; letter-spacing: -.4px; font-variant-numeric: tabular-nums; }
     .usage-value { margin-top: 5px; font-size: 16px; font-weight: 590; font-variant-numeric: tabular-nums; }
     .usage-updated { margin-top: 7px; color: var(--dsw-alias-label-caption); font-size: 10px; }
+    .balance-ledger { margin-bottom: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+    .balance-head { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:52px; padding:10px 14px; border-bottom:1px solid var(--dsw-alias-border-l1); }
+    .balance-actions { display:flex; gap:8px; }
+    .balance-title { font-weight:590; }
+    .balance-meta { margin-top:2px; color:var(--dsw-alias-label-tertiary); font-size:10px; }
+    .balance-grid { display:grid; grid-template-columns:1.25fr 1fr 1fr; }
+    .balance-cell { min-height:74px; display:flex; flex-direction:column; justify-content:center; padding:12px 14px; }
+    .balance-cell + .balance-cell { border-left:1px solid var(--dsw-alias-border-l1); }
+    .balance-cell span { color:var(--dsw-alias-label-tertiary); font-size:10px; }
+    .balance-cell strong { margin-top:4px; font-size:18px; font-weight:620; font-variant-numeric:tabular-nums; }
+    .balance-empty { padding:18px 14px; color:var(--dsw-alias-label-tertiary); font-size:12px; }
+    .unpriced-list { display:grid; gap:7px; }
+    .unpriced-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:14px; border:1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary) 26%, var(--dsw-alias-border-l2)); border-radius:10px; padding:9px 11px; background:var(--dsw-alias-bg-layer-1); }
+    .unpriced-route { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--ds-font-family-code); font-size:11px; }
     .session-list { display: grid; gap: 8px; }
     .session-card { border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
     .session-card summary { min-height: 58px; display: grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:10px 14px; cursor:pointer; list-style:none; }
@@ -97,7 +111,7 @@
     .dialog-head { padding: 19px 21px 15px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
     .dialog-head h2 { font-size: 17px; }
     .dialog-body { padding: 18px 21px 20px; }
-    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 17px; }
+    .mode-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 17px; }
     .mode-card { position: relative; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 11px 12px; cursor: pointer; }
     .mode-card:has(input:checked) { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-bg-module-platform); }
     .mode-card input { position: absolute; opacity: 0; pointer-events: none; }
@@ -109,14 +123,44 @@
     .field label { color: var(--dsw-alias-label-secondary); font-size: 11px; }
     .field input { width: 100%; height: 36px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: inherit; padding: 0 10px; outline: 0; }
     .field input::placeholder { color: var(--dsw-alias-label-caption); }
+    .datetime-picker { position:relative; }
+    .date-trigger { width:100%; height:36px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 10px; text-align:left; }
+    .date-trigger span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .date-trigger .date-placeholder { color:var(--dsw-alias-label-caption); }
+    .date-icon { color:var(--dsw-alias-label-tertiary); font-size:13px; }
+    .date-popover { position:absolute; z-index:20; left:0; top:42px; width:288px; border:1px solid var(--dsw-alias-border-l2); border-radius:12px; padding:12px; background:var(--dsw-alias-bg-base); box-shadow:0 14px 38px rgba(0,0,0,.16); }
+    .calendar-head { display:grid; grid-template-columns:28px minmax(0,1fr) 28px; align-items:center; gap:6px; }
+    .calendar-head strong { text-align:center; font-size:12px; font-weight:600; }
+    .calendar-nav { width:28px; height:28px; border:0; padding:0; background:transparent; font-size:17px; }
+    .calendar-week,.calendar-days { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+    .calendar-week { margin-top:9px; color:var(--dsw-alias-label-tertiary); font-size:9px; text-align:center; }
+    .calendar-week span { line-height:22px; }
+    .calendar-days { margin-top:2px; }
+    .calendar-day { width:100%; height:30px; border:0; border-radius:7px; padding:0; background:transparent; font-size:11px; }
+    .calendar-day:hover { background:var(--dsw-alias-interactive-bg-hover); }
+    .calendar-day.is-today { box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary); color:var(--dsw-alias-state-business-primary); }
+    .calendar-day.is-selected { background:var(--dsw-alias-state-business-primary); color:white; box-shadow:none; }
+    .calendar-blank { height:30px; }
+    .calendar-time { display:flex; align-items:center; gap:7px; margin-top:10px; padding-top:10px; border-top:1px solid var(--dsw-alias-border-l1); }
+    .calendar-time span { color:var(--dsw-alias-label-tertiary); font-size:10px; }
+    .calendar-time select { height:32px; flex:1; border:1px solid var(--dsw-alias-border-l2); border-radius:7px; background:var(--dsw-alias-bg-layer-1); color:inherit; padding:0 8px; outline:0; }
+    .calendar-actions { display:flex; align-items:center; justify-content:space-between; gap:7px; margin-top:10px; }
+    .calendar-actions button { height:30px; font-size:11px; }
+    .calendar-actions .calendar-done { margin-left:auto; }
     .price-fields { display: contents; }
     .form-hint { grid-column: 1 / -1; margin: -2px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 16px; }
     .inline-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
     .inline-check input { width: 15px; height: 15px; accent-color: var(--dsw-alias-state-business-primary); }
     .usage-warning { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary) 28%, var(--dsw-alias-border-l1)); border-radius: 10px; padding: 9px 12px; color: var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary)); background: var(--dsw-alias-bg-layer-1); font-size: 11px; line-height: 17px; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-    .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); padding: 9px 13px; box-shadow: 0 8px 30px rgba(0,0,0,.12); opacity: 0; pointer-events: none; transition: opacity .16s ease, transform .16s ease; font-size: 12px; }
+    .toast { position: fixed; z-index:100; left: 50%; top: 72px; display:flex; align-items:center; gap:9px; min-height:40px; max-width:min(520px,calc(100% - 32px)); transform: translate(-50%, -10px); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: color-mix(in srgb,var(--dsw-alias-label-primary) 88%,var(--dsw-alias-bg-base)); color:var(--dsw-alias-bg-base); padding: 9px 14px; box-shadow: 0 10px 32px rgba(0,0,0,.18); opacity: 0; pointer-events: none; transition: opacity .16s ease, transform .16s ease; font-size: 12px; }
+    .toast::before { content:"i"; width:18px; height:18px; display:grid; place-items:center; flex:none; border-radius:50%; background:rgba(255,255,255,.14); color:currentColor; font-size:11px; font-weight:750; }
+    .toast[data-phase="loading"]::before { content:""; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; background:transparent; animation:toast-spin .7s linear infinite; }
+    .toast[data-phase="success"]::before { content:"✓"; background:rgba(34,154,94,.22); color:#54cf8d; }
+    .toast[data-phase="warning"]::before { content:"!"; background:rgba(217,144,0,.22); color:#f5ad27; }
+    .toast[data-phase="error"]::before { content:"!"; background:rgba(220,64,64,.22); color:#ff7777; }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    @keyframes toast-spin { to { transform:rotate(360deg); } }
     @media (max-width: 720px) {
       main { width: min(100% - 28px, 860px); padding-top: 22px; }
       .page-header { display: block; }
@@ -129,6 +173,9 @@
       .usage-primary { grid-column:1/-1; }
       .usage-stat { border-top:1px solid var(--dsw-alias-border-l1); }
       .usage-stat:nth-of-type(3) { border-left:0; }
+      .balance-grid { grid-template-columns:1fr; }
+      .balance-cell + .balance-cell { border-left:0; border-top:1px solid var(--dsw-alias-border-l1); }
+      .mode-grid { grid-template-columns:1fr; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
   </style>
@@ -143,6 +190,10 @@
   <nav class="tabs" aria-label="用量与费用页面"><button class="tab" id="usageTab" aria-selected="true">用量总览</button><button class="tab" id="pricesTab" aria-selected="false">价格规则</button></nav>
 
   <div id="usageView">
+    <section class="balance-ledger" aria-labelledby="balanceTitle">
+      <div class="balance-head"><div><div class="balance-title" id="balanceTitle">DeepSeek 账户余额</div><div class="balance-meta" id="balanceMeta">正在检查 DEEPSEEK_API_KEY…</div></div><div class="balance-actions"><button id="balanceWarning">余额预警</button><button id="balanceRefresh">刷新余额</button></div></div>
+      <div id="balanceBody"><div class="balance-empty">正在读取官方账户余额。</div></div>
+    </section>
     <section class="usage-hero" aria-label="全部对话用量汇总">
       <div class="usage-primary"><span class="usage-label">全部对话预估费用</span><strong class="usage-amount" id="usageTotal">¥0.0000</strong><span class="usage-updated" id="usageUpdated">等待同步对话数据</span></div>
       <div class="usage-stat"><span class="usage-label">请求</span><strong class="usage-value" id="usageRequests">0</strong></div>
@@ -150,6 +201,10 @@
       <div class="usage-stat"><span class="usage-label">输出 Token</span><strong class="usage-value" id="usageOutput">0</strong></div>
     </section>
     <div class="usage-warning" id="usageWarnings" hidden></div>
+    <section class="section" id="unpricedSection" hidden aria-labelledby="unpricedTitle">
+      <div class="section-heading"><div><h2 id="unpricedTitle">待配置价格</h2><p class="section-copy">这些模型仍会统计 Token，但不会计入费用。</p></div></div>
+      <div class="unpriced-list" id="unpricedList"></div>
+    </section>
     <section class="section" aria-labelledby="sessionsTitle">
       <div class="section-heading"><div><h2 id="sessionsTitle">对话明细</h2><p class="section-copy">展开对话可查看其中每个模型的请求、Token 与费用。</p></div></div>
       <div class="session-list" id="sessionUsageList"></div>
@@ -183,14 +238,15 @@
     <div class="dialog-head"><h2 id="dialogTitle">添加价格规则</h2><p class="section-copy">可指定生效时间；更早的请求仍按当时匹配到的规则计算。</p></div>
     <div class="dialog-body">
       <div class="mode-grid" role="radiogroup" aria-label="计费方式">
+        <label class="mode-card" id="officialModeCard"><input type="radio" name="priceMode" value="official"><strong>官方价格</strong><small>跟随签名价格清单更新。</small></label>
         <label class="mode-card"><input type="radio" name="priceMode" value="custom" checked><strong>按 Token 计费</strong><small>分别设置输入、缓存命中和输出单价。</small></label>
         <label class="mode-card"><input type="radio" name="priceMode" value="free"><strong>免费 / 不计金额</strong><small>保留 Token 统计，但费用始终显示为零。</small></label>
       </div>
       <div class="form-grid">
         <div class="field"><label for="priceProvider">供应商路由</label><input id="priceProvider" autocomplete="off" placeholder="例如 deepseek-official"></div>
         <div class="field"><label for="priceModel">模型 ID</label><input id="priceModel" autocomplete="off" placeholder="例如 deepseek-v4-flash"></div>
-        <div class="field"><label for="priceEffective">开始生效时间</label><input id="priceEffective" type="datetime-local"></div>
-        <div class="field"><label for="priceEffectiveTo">结束生效时间（可选）</label><input id="priceEffectiveTo" type="datetime-local"></div>
+        <div class="field custom-time"><label>开始生效时间</label><div class="datetime-picker" id="priceEffectivePicker"></div></div>
+        <div class="field custom-time"><label>结束生效时间（可选）</label><div class="datetime-picker" id="priceEffectiveToPicker"></div></div>
         <div class="price-fields" id="priceFields">
           <div class="field"><label for="priceCurrency">币种</label><input id="priceCurrency" value="CNY" maxlength="3"></div>
           <div class="field"><label for="priceInput">未缓存输入</label><input id="priceInput" type="number" min="0" step="any" placeholder="每百万 Token"></div>
@@ -205,6 +261,19 @@
     </div>
   </form>
 </dialog>
+<dialog id="balanceWarningDialog" aria-labelledby="balanceWarningTitle">
+  <form method="dialog" id="balanceWarningForm">
+    <div class="dialog-head"><h2 id="balanceWarningTitle">余额预警</h2><p class="section-copy">当 DeepSeek 总余额低于或等于阈值时，在对话右侧提醒。</p></div>
+    <div class="dialog-body">
+      <label class="auto-control"><input class="switch" id="balanceWarningEnabled" type="checkbox">启用低余额预警</label>
+      <div class="form-grid" style="margin-top:17px">
+        <div class="field"><label for="balanceWarningCny">CNY 预警值</label><input id="balanceWarningCny" inputmode="decimal" placeholder="例如 10"></div>
+        <div class="field"><label for="balanceWarningUsd">USD 预警值</label><input id="balanceWarningUsd" inputmode="decimal" placeholder="例如 2"></div>
+      </div>
+      <div class="dialog-actions"><button value="cancel">取消</button><button type="button" class="primary" id="saveBalanceWarning">保存预警</button></div>
+    </div>
+  </form>
+</dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -214,6 +283,7 @@
   let usageReport = { syncedAt: '', lastUsageAt: null, sessions: [], totals: [], requests: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unpricedRequests: 0, warnings: [] };
   let editingRuleId = null;
   let pendingEditTarget = null;
+  let currentBalance = null;
   let themePreference = 'system';
   let toastTimer;
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -225,7 +295,13 @@
     document.body.toggleAttribute('data-ds-dark-theme', dark);
   }
   systemDark.addEventListener('change', () => { if (themePreference === 'system') applyTheme('system'); });
-  function notify(message) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('show'); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2200); }
+  function notify(message, phase = 'info', persistent = false) {
+    clearTimeout(toastTimer);
+    $('toast').textContent = message;
+    $('toast').dataset.phase = phase;
+    $('toast').classList.add('show');
+    if (!persistent) toastTimer = setTimeout(() => $('toast').classList.remove('show'), phase === 'error' ? 4200 : 2400);
+  }
   function setStatus(message, phase = 'ready') { $('statusText').textContent = message; $('statusDot').className = `dot ${phase}`; }
   function statusLabel(status, rule) {
     if (status === 'future') return { label: `将于 ${new Date(rule.effectiveFrom).toLocaleDateString()} 生效`, kind: '' };
@@ -236,12 +312,51 @@
   }
   const compactTokens = (value) => value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(value >= 1e4 ? 0 : 1)}K` : String(value);
   const formatTotals = (totals, unknown = 0) => totals.map(({ display }) => display).join(' + ') || (unknown ? '部分未计价' : '¥0.0000');
+  const formatBalance = (currency, value) => {
+    const [whole, rawFraction = ''] = String(value).split('.');
+    const grouped = new Intl.NumberFormat('zh-CN', { maximumFractionDigits:0 }).format(BigInt(whole));
+    const fraction = rawFraction.slice(0, 6).padEnd(2, '0');
+    let inserted = false;
+    return new Intl.NumberFormat('zh-CN', { style:'currency', currency, maximumFractionDigits:0 }).formatToParts(0n).map((part) => {
+      if (['integer','group','decimal','fraction'].includes(part.type)) { if (inserted) return ''; inserted = true; return `${grouped}.${fraction}`; }
+      return part.value;
+    }).join('');
+  };
+  function renderBalance(value) {
+    currentBalance = value;
+    const body = $('balanceBody');
+    if (!value.configured) {
+      $('balanceMeta').textContent = '尚未配置 DEEPSEEK_API_KEY';
+      body.innerHTML = '<div class="balance-empty">在应用设置的系统凭据中保存 DEEPSEEK_API_KEY 后，即可查询总余额、赠送余额和充值余额。</div>';
+      return;
+    }
+    const suffix = value.errorSummary ? ` · ${value.errorSummary}` : value.isAvailable === false ? ' · 当前余额不可用' : '';
+    $('balanceMeta').textContent = `${value.checkedAt ? new Date(value.checkedAt).toLocaleString() + ' 更新' : '等待刷新'}${value.stale ? ' · 显示上次结果' : ''}${suffix}`;
+    if (!value.balances.length) { body.innerHTML = '<div class="balance-empty">暂时没有可显示的余额数据，请点击刷新重试。</div>'; return; }
+    body.replaceChildren(...value.balances.map((balance) => {
+      const grid = document.createElement('div'); grid.className = 'balance-grid';
+      grid.innerHTML = `<div class="balance-cell"><span>${escapeHtml(balance.currency)} 总余额${balance.warning ? ` · 低于 ${escapeHtml(balance.warningThresholdDisplay || balance.warningThreshold)}` : ''}</span><strong>${escapeHtml(balance.totalDisplay || formatBalance(balance.currency, balance.totalBalance))}</strong></div><div class="balance-cell"><span>赠送余额</span><strong>${escapeHtml(balance.grantedDisplay || formatBalance(balance.currency, balance.grantedBalance))}</strong></div><div class="balance-cell"><span>充值余额</span><strong>${escapeHtml(balance.toppedUpDisplay || formatBalance(balance.currency, balance.toppedUpBalance))}</strong></div>`;
+      return grid;
+    }));
+  }
+  function renderUnpriced() {
+    const models = new Map();
+    for (const session of usageReport.sessions) for (const model of session.models) if (!model.currentPricing) models.set(`${model.provider.toLowerCase()}\u0000${model.model.toLowerCase()}`, model);
+    $('unpricedSection').hidden = models.size === 0;
+    $('unpricedList').replaceChildren(...[...models.values()].map((model) => {
+      const row = document.createElement('div'); row.className = 'unpriced-row';
+      const route = document.createElement('div'); route.className = 'unpriced-route'; route.textContent = `${model.provider} / ${model.model}`;
+      const button = document.createElement('button'); button.textContent = '配置价格'; button.onclick = () => handleBillingEditTarget({ provider:model.provider, model:model.model });
+      row.append(route, button); return row;
+    }));
+  }
   function renderUsage() {
     const sessions = usageReport.sessions.filter((session) => session.requests);
     $('usageTotal').textContent = formatTotals(usageReport.totals, usageReport.unpricedRequests);
     $('usageRequests').textContent = String(usageReport.requests); $('usageInput').textContent = compactTokens(usageReport.inputTokens + usageReport.cacheReadTokens + usageReport.cacheWriteTokens); $('usageOutput').textContent = compactTokens(usageReport.outputTokens);
     $('usageUpdated').textContent = usageReport.syncedAt ? `${sessions.length} 个有用量对话 · ${new Date(usageReport.syncedAt).toLocaleString()} 同步${usageReport.lastUsageAt ? ` · 最后用量 ${new Date(usageReport.lastUsageAt).toLocaleString()}` : ''}` : '打开任一对话后将自动同步';
     $('usageWarnings').hidden = !usageReport.warnings?.length; $('usageWarnings').textContent = usageReport.warnings?.join(' ');
+    renderUnpriced();
     if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>还没有可汇总的用量</strong>打开对话并发送消息后，这里会按对话和模型持续累计。</div>'; $('sessionUsageList').replaceChildren(empty); return; }
     $('sessionUsageList').replaceChildren(...sessions.sort((a,b) => Date.parse(b.lastUsageAt || 0) - Date.parse(a.lastUsageAt || 0)).map((session) => {
       const card = document.createElement('details'); card.className = 'session-card';
@@ -269,7 +384,7 @@
     const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = '删除';
     card.querySelector('.badges').append(edit);
     card.querySelector('.badges').append(remove);
-    remove.onclick = async () => { const next = await window.desktop.setBillingSettings({ ...billing, customRules: billing.customRules.filter((item) => item.id !== rule.id) }); render(next); notify('规则已删除'); };
+    remove.onclick = async () => { notify('正在删除价格规则…', 'loading', true); try { const next = await window.desktop.setBillingSettings({ ...billing, customRules: billing.customRules.filter((item) => item.id !== rule.id) }); render(next); notify('规则已删除', 'success'); } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); } };
     return card;
   }
   function render(next) {
@@ -284,48 +399,128 @@
   }
   function setView(view) { const usage = view === 'usage'; $('usageView').hidden = !usage; $('pricesView').hidden = usage; $('usageTab').setAttribute('aria-selected', String(usage)); $('pricesTab').setAttribute('aria-selected', String(!usage)); }
   $('usageTab').onclick = () => setView('usage'); $('pricesTab').onclick = () => setView('prices');
-  document.querySelectorAll('input[name="priceMode"]').forEach((radio) => radio.onchange = () => $('priceFields').hidden = radio.value === 'free' && radio.checked);
   $('priceCacheSame').onchange = () => { $('priceCacheWriteField').hidden = $('priceCacheSame').checked; if ($('priceCacheSame').checked) $('priceCacheWrite').value = $('priceInput').value; };
   $('priceInput').oninput = () => { if ($('priceCacheSame').checked) $('priceCacheWrite').value = $('priceInput').value; };
-  const localDateTime = (value = Date.now()) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+  function createDateTimePicker(id, optional = false) {
+    const root = $(id); let selected = null; let view = new Date();
+    const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'date-trigger';
+    const label = document.createElement('span'); const icon = document.createElement('span'); icon.className = 'date-icon'; icon.textContent = '▦'; trigger.append(label, icon);
+    const popover = document.createElement('div'); popover.className = 'date-popover'; popover.hidden = true;
+    const month = document.createElement('strong');
+    const previous = document.createElement('button'); previous.type = 'button'; previous.className = 'calendar-nav'; previous.textContent = '‹'; previous.setAttribute('aria-label','上个月');
+    const next = document.createElement('button'); next.type = 'button'; next.className = 'calendar-nav'; next.textContent = '›'; next.setAttribute('aria-label','下个月');
+    const head = document.createElement('div'); head.className = 'calendar-head'; head.append(previous, month, next);
+    const week = document.createElement('div'); week.className = 'calendar-week'; week.innerHTML = '<span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>';
+    const days = document.createElement('div'); days.className = 'calendar-days';
+    const hour = document.createElement('select'); hour.setAttribute('aria-label','小时');
+    const minute = document.createElement('select'); minute.setAttribute('aria-label','分钟');
+    hour.innerHTML = Array.from({length:24},(_,value) => `<option value="${value}">${String(value).padStart(2,'0')}</option>`).join('');
+    minute.innerHTML = Array.from({length:60},(_,value) => `<option value="${value}">${String(value).padStart(2,'0')}</option>`).join('');
+    const time = document.createElement('div'); time.className = 'calendar-time'; time.append(document.createTextNode('时间'), hour, document.createTextNode(':'), minute);
+    const now = document.createElement('button'); now.type = 'button'; now.textContent = '现在';
+    const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = '清除'; clear.hidden = !optional;
+    const done = document.createElement('button'); done.type = 'button'; done.className = 'primary calendar-done'; done.textContent = '完成';
+    const actions = document.createElement('div'); actions.className = 'calendar-actions'; actions.append(clear, now, done);
+    popover.append(head, week, days, time, actions); root.append(trigger, popover);
+    const sameDay = (left,right) => Boolean(left && right && left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate());
+    const updateLabel = () => {
+      label.className = selected ? '' : 'date-placeholder';
+      label.textContent = selected ? `${selected.getFullYear()}年${selected.getMonth()+1}月${selected.getDate()}日 ${String(selected.getHours()).padStart(2,'0')}:${String(selected.getMinutes()).padStart(2,'0')}` : '未设置';
+    };
+    const renderCalendar = () => {
+      month.textContent = `${view.getFullYear()}年 ${view.getMonth()+1}月`;
+      const first = new Date(view.getFullYear(), view.getMonth(), 1); const offset = (first.getDay() + 6) % 7;
+      const count = new Date(view.getFullYear(), view.getMonth()+1, 0).getDate(); const today = new Date(); const nodes = [];
+      for (let index=0; index<offset; index+=1) { const blank=document.createElement('span'); blank.className='calendar-blank'; nodes.push(blank); }
+      for (let day=1; day<=count; day+=1) {
+        const date = new Date(view.getFullYear(), view.getMonth(), day); const button=document.createElement('button'); button.type='button'; button.className='calendar-day'; button.textContent=String(day);
+        if (sameDay(date,today)) button.classList.add('is-today'); if (sameDay(date,selected)) button.classList.add('is-selected');
+        button.onclick = () => { const base=selected || new Date(); selected=new Date(date.getFullYear(),date.getMonth(),day,base.getHours(),base.getMinutes()); hour.value=String(selected.getHours()); minute.value=String(selected.getMinutes()); updateLabel(); renderCalendar(); };
+        nodes.push(button);
+      }
+      days.replaceChildren(...nodes); hour.value=String(selected?.getHours() ?? 0); minute.value=String(selected?.getMinutes() ?? 0);
+    };
+    const setTime = () => { if (!selected) selected = new Date(view.getFullYear(),view.getMonth(),view.getDate()); selected.setHours(Number(hour.value),Number(minute.value),0,0); updateLabel(); };
+    hour.onchange=setTime; minute.onchange=setTime;
+    previous.onclick=()=>{ view=new Date(view.getFullYear(),view.getMonth()-1,1); renderCalendar(); };
+    next.onclick=()=>{ view=new Date(view.getFullYear(),view.getMonth()+1,1); renderCalendar(); };
+    trigger.onclick=()=>{ popover.hidden=!popover.hidden; if (!popover.hidden) renderCalendar(); };
+    now.onclick=()=>{ selected=new Date(); selected.setSeconds(0,0); view=new Date(selected); updateLabel(); renderCalendar(); };
+    clear.onclick=()=>{ selected=null; updateLabel(); popover.hidden=true; };
+    done.onclick=()=>{ if (!selected) { selected=new Date(); selected.setSeconds(0,0); } setTime(); popover.hidden=true; };
+    document.addEventListener('pointerdown',(event)=>{ if (!root.contains(event.target)) popover.hidden=true; });
+    document.addEventListener('keydown',(event)=>{ if (event.key === 'Escape') popover.hidden=true; });
+    updateLabel();
+    return {
+      set(value) { selected=value ? new Date(value) : null; if (selected && !Number.isFinite(selected.getTime())) selected=null; view=new Date(selected || Date.now()); updateLabel(); renderCalendar(); },
+      get() { return selected ? new Date(selected) : null; },
+      focus() { trigger.focus(); }
+    };
+  }
+  const effectivePicker = createDateTimePicker('priceEffectivePicker');
+  const effectiveToPicker = createDateTimePicker('priceEffectiveToPicker', true);
+  const bindingFor = (provider) => billing.providerBindings.find((binding) => binding.provider.toLowerCase() === provider.toLowerCase());
+  function officialCandidate(target) {
+    const catalogProvider = bindingFor(target.provider)?.catalogProvider || target.provider;
+    const preferred = billing.catalog.rules.filter((rule) => rule.provider.toLowerCase() === catalogProvider.toLowerCase() && rule.model.toLowerCase() === target.model.toLowerCase());
+    if (preferred.length) return preferred.sort((a,b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
+    const matches = billing.catalog.rules.filter((rule) => rule.model.toLowerCase() === target.model.toLowerCase());
+    return new Set(matches.map((rule) => rule.provider.toLowerCase())).size === 1 ? matches.sort((a,b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0] : null;
+  }
+  function applyPriceMode() {
+    const mode = document.querySelector('input[name="priceMode"]:checked').value;
+    $('priceFields').hidden = mode !== 'custom';
+    document.querySelectorAll('.custom-time').forEach((field) => field.hidden = mode === 'official');
+  }
+  document.querySelectorAll('input[name="priceMode"]').forEach((radio) => radio.onchange = applyPriceMode);
   function openRuleDialog(target = {}, rule = null) {
     editingRuleId = rule?.id || null;
     $('priceForm').reset();
     $('dialogTitle').textContent = rule ? '编辑价格规则' : (target.provider && target.model ? '修正模型价格' : '添加价格规则');
     $('priceProvider').value = rule?.provider || target.provider || '';
     $('priceModel').value = rule?.model || target.model || '';
-    $('priceEffective').value = localDateTime(rule?.effectiveFrom || Date.now());
-    $('priceEffectiveTo').value = rule?.effectiveTo ? localDateTime(rule.effectiveTo) : '';
+    effectivePicker.set(rule?.effectiveFrom || Date.now());
+    effectiveToPicker.set(rule?.effectiveTo || null);
     $('priceCurrency').value = rule?.currency || 'CNY';
-    const mode = rule?.mode || 'custom';
+    const candidate = target.provider && target.model ? officialCandidate(target) : null;
+    $('officialModeCard').hidden = !candidate;
+    const mode = rule?.mode || (candidate ? 'official' : 'custom');
     document.querySelector(`input[name="priceMode"][value="${mode}"]`).checked = true;
-    $('priceFields').hidden = mode === 'free';
+    applyPriceMode();
     if (rule && mode !== 'free') {
       $('priceInput').value = rule.rates.input; $('priceCache').value = rule.rates.cacheRead; $('priceCacheWrite').value = rule.rates.cacheWrite; $('priceOutput').value = rule.rates.output;
       $('priceCacheSame').checked = rule.rates.cacheWrite === rule.rates.input;
     } else { $('priceCacheSame').checked = true; $('priceCacheWrite').value = ''; }
     $('priceCacheWriteField').hidden = $('priceCacheSame').checked;
-    $('priceDialog').showModal(); setTimeout(() => (target.provider ? $('priceInput') : $('priceProvider')).focus(), 0);
+    $('priceDialog').showModal(); setTimeout(() => { if (mode === 'custom' && target.provider) $('priceInput')?.focus(); else if (target.provider) effectivePicker.focus(); else $('priceProvider')?.focus(); }, 0);
   }
   $('openAdd').onclick = () => openRuleDialog();
-  $('billingAuto').onchange = async () => { try { render(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); notify('自动检查设置已保存'); } catch (error) { render(billing); setStatus(error instanceof Error ? error.message : String(error), 'error'); } };
-  $('billingRefresh').onclick = async () => { $('billingRefresh').disabled = true; setStatus('正在检查 DeepSeek 官方价格…', 'busy'); try { const result = await window.desktop.checkBillingPrices(); render(result.settings); setStatus(result.message); } catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); } finally { $('billingRefresh').disabled = false; } };
+  $('billingAuto').onchange = async () => { notify('正在保存自动检查设置…', 'loading', true); try { render(await window.desktop.setBillingSettings({ ...billing, autoUpdate: $('billingAuto').checked })); notify('自动检查设置已保存', 'success'); } catch (error) { render(billing); const message = error instanceof Error ? error.message : String(error); setStatus(message, 'error'); notify(message, 'error'); } };
+  $('billingRefresh').onclick = async () => { $('billingRefresh').disabled = true; setStatus('正在检查 DeepSeek 官方价格…', 'busy'); notify('正在验证签名并检查新价格…', 'loading', true); try { const result = await window.desktop.checkBillingPrices(); render(result.settings); setStatus(result.message, result.errorSummary ? 'error' : 'ready'); notify(result.message, result.errorSummary ? 'warning' : 'success'); } catch (error) { const message = error instanceof Error ? error.message : String(error); setStatus(message, 'error'); notify(message, 'error'); } finally { $('billingRefresh').disabled = false; } };
   $('savePrice').onclick = async () => {
     const mode = document.querySelector('input[name="priceMode"]:checked').value;
     const provider = $('priceProvider').value.trim(), model = $('priceModel').value.trim();
     if (!provider || !model) { notify('请填写供应商路由和模型 ID'); return; }
+    if (mode === 'official') {
+      const candidate = officialCandidate({ provider, model });
+      if (!candidate) { notify('官方价格清单中没有这个模型'); return; }
+      notify('正在恢复官方价格…', 'loading', true);
+      try { render(await window.desktop.useOfficialBilling({ provider, model }, candidate.provider)); $('priceDialog').close(); notify('已从现在起使用官方价格，历史费用保持不变', 'success'); } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); }
+      return;
+    }
     const number = (id) => mode === 'free' ? 0 : Number($(id).value);
     const rates = { input: number('priceInput'), cacheRead: number('priceCache'), cacheWrite: $('priceCacheSame').checked ? number('priceInput') : number('priceCacheWrite'), output: number('priceOutput') };
     if (Object.values(rates).some((value) => !Number.isFinite(value) || value < 0)) { notify('请填写完整、有效的非负单价'); return; }
     const currency = $('priceCurrency').value.trim().toUpperCase();
     if (!/^[A-Z]{3}$/.test(currency)) { notify('币种请填写 3 位代码，例如 CNY 或 USD'); return; }
-    const effectiveFrom = new Date($('priceEffective').value);
-    if (!Number.isFinite(effectiveFrom.getTime())) { notify('请选择有效的生效时间'); return; }
-    const effectiveTo = $('priceEffectiveTo').value ? new Date($('priceEffectiveTo').value) : null;
+    const effectiveFrom = effectivePicker.get();
+    if (!effectiveFrom || !Number.isFinite(effectiveFrom.getTime())) { notify('请选择有效的生效时间'); return; }
+    const effectiveTo = effectiveToPicker.get();
     if (effectiveTo && (!Number.isFinite(effectiveTo.getTime()) || effectiveTo <= effectiveFrom)) { notify('结束时间必须晚于开始时间'); return; }
     const rule = { id: editingRuleId || `custom-${Date.now()}`, provider, model, label: `${provider}/${model}（自定义）`, currency, mode, effectiveFrom: effectiveFrom.toISOString(), ...(effectiveTo ? { effectiveTo: effectiveTo.toISOString() } : {}), rates };
     const customRules = editingRuleId ? billing.customRules.map((item) => item.id === editingRuleId ? rule : item) : [...billing.customRules, rule];
-    try { render(await window.desktop.setBillingSettings({ ...billing, customRules })); $('priceDialog').close(); notify('价格规则已保存，费用已重新计算'); } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    notify('正在保存价格规则…', 'loading', true);
+    try { render(await window.desktop.setBillingSettings({ ...billing, customRules })); $('priceDialog').close(); notify('价格规则已保存，费用已重新计算', 'success'); } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); }
   };
   window.desktop.onBillingChanged(render);
   window.desktop.onBillingUsageChanged((next) => { usageReport = next; renderUsage(); });
@@ -337,8 +532,37 @@
   }
   window.desktop.onBillingEditRequested(handleBillingEditTarget);
   window.desktop.onInfoChanged((info) => applyTheme(info.themePreference));
-  Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([info, settings, usage]) => { usageReport = usage; applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
-  setInterval(() => Promise.all([window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([settings, usage]) => { usageReport = usage; render(settings); }).catch(() => {}), 60_000);
+  $('balanceWarning').onclick = () => {
+    const warning = billing.balanceWarning || { enabled:false, thresholds:{ CNY:'10', USD:'2' } };
+    $('balanceWarningEnabled').checked = warning.enabled;
+    $('balanceWarningCny').value = warning.thresholds.CNY;
+    $('balanceWarningUsd').value = warning.thresholds.USD;
+    $('balanceWarningDialog').showModal();
+  };
+  $('saveBalanceWarning').onclick = async () => {
+    const CNY = $('balanceWarningCny').value.trim(), USD = $('balanceWarningUsd').value.trim();
+    if (![CNY, USD].every((value) => /^\d+(?:\.\d{1,9})?$/.test(value))) { notify('请输入有效的非负预警值，最多 9 位小数', 'warning'); return; }
+    notify('正在保存余额预警…', 'loading', true);
+    try {
+      render(await window.desktop.setBillingSettings({ ...billing, balanceWarning: { enabled:$('balanceWarningEnabled').checked, thresholds:{ CNY, USD } } }));
+      $('balanceWarningDialog').close();
+      renderBalance(await window.desktop.getDeepSeekBalance());
+      notify($('balanceWarningEnabled').checked ? '余额预警已启用' : '余额预警已关闭', 'success');
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); }
+  };
+  $('balanceRefresh').onclick = async () => {
+    $('balanceRefresh').disabled = true; notify('正在查询 DeepSeek 账户余额…', 'loading', true);
+    try {
+      const value = await window.desktop.refreshDeepSeekBalance(); renderBalance(value);
+      const warnings = value.balances.filter((entry) => entry.warning);
+      if (value.errorSummary) notify(value.errorSummary, value.stale ? 'warning' : 'error');
+      else if (warnings.length) notify(`${warnings.map((entry) => `${entry.currency} ${entry.totalDisplay}`).join('、')} 已达到余额预警值`, 'warning');
+      else notify('账户余额已更新', 'success');
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); }
+    finally { $('balanceRefresh').disabled = false; }
+  };
+  Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings(), window.desktop.getBillingUsage(), window.desktop.getDeepSeekBalance()]).then(([info, settings, usage, balance]) => { usageReport = usage; applyTheme(info.themePreference); render(settings); renderBalance(balance); setStatus('价格清单已就绪'); });
+  setInterval(() => Promise.all([window.desktop.getBillingSettings(), window.desktop.getBillingUsage(), window.desktop.getDeepSeekBalance()]).then(([settings, usage, balance]) => { usageReport = usage; render(settings); renderBalance(balance); }).catch(() => {}), 60_000);
 </script>
 </body>
 </html>

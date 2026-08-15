@@ -1,12 +1,16 @@
 import { verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { BillingCatalog, BillingPeakSchedule, BillingPriceRule, BillingSettings, BillingUpdateResult } from "../shared/billing.js";
+import type { BillingBalanceWarningSettings, BillingCatalog, BillingPeakSchedule, BillingPriceRule, BillingProviderBinding, BillingSettings, BillingUpdateResult } from "../shared/billing.js";
 import { SettingsStore } from "./settings-store.js";
 
 const REMOTE_CATALOG_URLS = [
-  "https://raw.githubusercontent.com/Yu-bufan-k/deepseek-harness-desktop/main/pricing/prices.signed.json",
-  "https://cdn.jsdelivr.net/gh/Yu-bufan-k/deepseek-harness-desktop@main/pricing/prices.signed.json"
+  "https://api.github.com/repos/Yu-bufan-k/deepseek-harness-desktop/contents/pricing/prices.signed.json?ref=main",
+  "https://cdn.jsdelivr.net/gh/Yu-bufan-k/deepseek-harness-desktop@main/pricing/prices.signed.json",
+  // Transitional signed feed until the current billing PR lands on main. Signature verification still applies.
+  "https://api.github.com/repos/Yu-bufan-k/deepseek-harness-desktop/contents/pricing/prices.signed.json?ref=agent%2Fbilling-ui-redesign",
+  "https://cdn.jsdelivr.net/gh/Yu-bufan-k/deepseek-harness-desktop@agent/billing-ui-redesign/pricing/prices.signed.json",
+  "https://raw.githubusercontent.com/Yu-bufan-k/deepseek-harness-desktop/main/pricing/prices.signed.json"
 ];
 const MAX_CATALOG_BYTES = 2_000_000;
 
@@ -114,16 +118,28 @@ function scheduleFor(catalog: BillingCatalog, rule: BillingPriceRule): BillingPe
   return catalog.peakSchedules.find((schedule) => schedule.id === rule.peakScheduleId) ?? null;
 }
 
-function economicSignature(catalog: BillingCatalog, rule: BillingPriceRule): string {
-  const { label: _label, source: _source, peakScheduleId: _scheduleId, ...economicRule } = rule;
-  return canonicalJson({ ...economicRule, peakSchedule: scheduleFor(catalog, rule) && { timezone: scheduleFor(catalog, rule)!.timezone, windows: scheduleFor(catalog, rule)!.windows } });
+function nextEffectiveFrom(catalog: BillingCatalog, rule: BillingPriceRule): string | undefined {
+  const provider = rule.provider.trim().toLowerCase(), model = rule.model.trim().toLowerCase(), start = Date.parse(rule.effectiveFrom);
+  return catalog.rules
+    .filter((candidate) => candidate.provider.trim().toLowerCase() === provider && candidate.model.trim().toLowerCase() === model && Date.parse(candidate.effectiveFrom) > start)
+    .sort((left, right) => Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom))[0]?.effectiveFrom;
+}
+
+function economicEffectiveTo(catalog: BillingCatalog, rule: BillingPriceRule): string | undefined {
+  return rule.effectiveTo ?? nextEffectiveFrom(catalog, rule);
+}
+
+function economicSignature(catalog: BillingCatalog, rule: BillingPriceRule, effectiveTo = economicEffectiveTo(catalog, rule)): string {
+  const { label: _label, source: _source, peakScheduleId: _scheduleId, effectiveTo: _effectiveTo, ...economicRule } = rule;
+  return canonicalJson({ ...economicRule, ...(effectiveTo ? { effectiveTo } : {}), peakSchedule: scheduleFor(catalog, rule) && { timezone: scheduleFor(catalog, rule)!.timezone, windows: scheduleFor(catalog, rule)!.windows } });
 }
 
 export function assertAppendOnlyCatalog(current: BillingCatalog, remote: BillingCatalog): void {
   const remoteById = new Map(remote.rules.map((rule) => [rule.id, rule]));
   for (const rule of current.rules) {
     const next = remoteById.get(rule.id);
-    if (!next || economicSignature(remote, next) !== economicSignature(current, rule)) throw new Error(`价格更新试图删除或修改历史规则：${rule.id}`);
+    const currentEnd = economicEffectiveTo(current, rule) ?? (next ? nextEffectiveFrom(remote, next) : undefined);
+    if (!next || economicSignature(remote, next) !== economicSignature(current, rule, currentEnd)) throw new Error(`价格更新试图删除或修改历史规则：${rule.id}`);
   }
 }
 
@@ -134,6 +150,32 @@ function validateCustomRules(value: unknown): BillingPriceRule[] {
   if (!Array.isArray(value) || !value.every(validCustomRule)) throw new Error("自定义价格规则无效");
   if (new Set(value.map((rule) => rule.id)).size !== value.length) throw new Error("自定义价格规则包含重复 ID");
   return structuredClone(value);
+}
+
+function validateProviderBindings(value: unknown): BillingProviderBinding[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((entry) => entry && typeof entry === "object"
+    && typeof (entry as BillingProviderBinding).provider === "string" && (entry as BillingProviderBinding).provider.trim().length > 0
+    && typeof (entry as BillingProviderBinding).catalogProvider === "string" && (entry as BillingProviderBinding).catalogProvider.trim().length > 0)) throw new Error("提供方价格绑定无效");
+  const normalized = value.map((entry) => ({ provider: (entry as BillingProviderBinding).provider.trim(), catalogProvider: (entry as BillingProviderBinding).catalogProvider.trim() }));
+  if (new Set(normalized.map((entry) => entry.provider.toLowerCase())).size !== normalized.length) throw new Error("提供方价格绑定包含重复路由");
+  return structuredClone(normalized);
+}
+
+const DEFAULT_BALANCE_WARNING: BillingBalanceWarningSettings = { enabled: false, thresholds: { CNY: "10", USD: "2" } };
+
+function validateBalanceWarning(value: unknown): BillingBalanceWarningSettings {
+  if (value === undefined) return structuredClone(DEFAULT_BALANCE_WARNING);
+  if (!value || typeof value !== "object") throw new Error("余额预警设置无效");
+  const candidate = value as Partial<BillingBalanceWarningSettings>;
+  const thresholds = candidate.thresholds;
+  if (!thresholds || typeof thresholds !== "object") throw new Error("余额预警阈值无效");
+  const normalizeAmount = (currency: "CNY" | "USD"): string => {
+    const amount = (thresholds as Record<string, unknown>)[currency];
+    if (typeof amount !== "string" || !/^\d+(?:\.\d{1,9})?$/.test(amount.trim())) throw new Error(`${currency} 余额预警值无效`);
+    return amount.trim();
+  };
+  return { enabled: Boolean(candidate.enabled), thresholds: { CNY: normalizeAmount("CNY"), USD: normalizeAmount("USD") } };
 }
 
 export class BillingStore {
@@ -161,6 +203,7 @@ export class BillingStore {
           for (const rule of (stored as BillingSettings).customRules) if (validCustomRule(rule) && !unique.has(rule.id)) unique.set(rule.id, structuredClone(rule));
           recovered.customRules = [...unique.values()];
         }
+        try { recovered.providerBindings = validateProviderBindings((stored as BillingSettings).providerBindings); } catch { /* 丢弃损坏的提供方绑定。 */ }
         await this.settings.patch({ billing: recovered });
       }
     }
@@ -174,13 +217,20 @@ export class BillingStore {
   }
 
   async checkForUpdates(): Promise<BillingUpdateResult> {
-    const remote = await this.fetchVerifiedCatalog();
     const current = this.get();
-    const updated = Date.parse(remote.publishedAt) > Date.parse(current.catalog.publishedAt);
-    if (updated) assertAppendOnlyCatalog(current.catalog, remote);
-    const checkedAt = new Date().toISOString();
-    const settings = await this.saveInternal({ ...current, lastCheckedAt: checkedAt, catalog: updated ? remote : current.catalog });
-    return { updated, checkedAt, settings, message: updated ? "已验证签名并更新价格清单" : "价格清单签名有效，当前已是最新版" };
+    try {
+      const remote = await this.fetchVerifiedCatalog();
+      const updated = Date.parse(remote.publishedAt) > Date.parse(current.catalog.publishedAt);
+      if (updated) assertAppendOnlyCatalog(current.catalog, remote);
+      const checkedAt = new Date().toISOString();
+      const settings = await this.saveInternal({ ...current, lastCheckedAt: checkedAt, catalog: updated ? remote : current.catalog });
+      return { updated, checkedAt, settings, message: updated ? "已验证签名并更新价格清单" : "价格清单签名有效，当前已是最新版" };
+    }
+    catch (error) {
+      const checkedAt = new Date().toISOString();
+      const errorSummary = error instanceof Error ? error.message : String(error);
+      return { updated: false, checkedAt, settings: current, errorSummary, message: `${errorSummary} 内置签名价格仍可正常计费。` };
+    }
   }
 
   shouldAutoCheck(): boolean {
@@ -194,10 +244,15 @@ export class BillingStore {
     const failures: string[] = [];
     for (const url of this.remoteUrls) {
       try {
-        const response = await this.fetcher(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+        const response = await this.fetcher(url, { headers: { accept: "application/json", "user-agent": "DeepSeek-Harness-Desktop" }, signal: AbortSignal.timeout(15_000) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const text = await response.text();
+        let text = await response.text();
         if (Buffer.byteLength(text) > MAX_CATALOG_BYTES) throw new Error("响应过大");
+        const parsed = JSON.parse(text) as Partial<SignedCatalogEnvelope> & { encoding?: unknown; content?: unknown };
+        if (parsed.encoding === "base64" && typeof parsed.content === "string") {
+          text = Buffer.from(parsed.content.replace(/\s/g, ""), "base64").toString("utf8");
+          if (Buffer.byteLength(text) > MAX_CATALOG_BYTES) throw new Error("解码后的响应过大");
+        }
         const envelope = JSON.parse(text) as Partial<SignedCatalogEnvelope>;
         if (envelope.algorithm !== "Ed25519" || typeof envelope.keyId !== "string" || typeof envelope.signature !== "string" || !envelope.catalog) throw new Error("签名清单格式无效");
         const signature = Buffer.from(envelope.signature, "base64");
@@ -211,12 +266,14 @@ export class BillingStore {
   private async saveInternal(next: BillingSettings): Promise<BillingSettings> {
     const catalog = validateCatalog(next.catalog);
     const customRules = validateCustomRules(next.customRules);
+    const providerBindings = validateProviderBindings(next.providerBindings);
+    const balanceWarning = validateBalanceWarning(next.balanceWarning);
     if (!Number.isInteger(next.checkIntervalHours) || next.checkIntervalHours < 1 || next.checkIntervalHours > 720) throw new Error("检查间隔应为 1–720 小时");
     if (next.lastCheckedAt !== null && (typeof next.lastCheckedAt !== "string" || !Number.isFinite(Date.parse(next.lastCheckedAt)))) throw new Error("价格检查时间无效");
-    const value: BillingSettings = { autoUpdate: Boolean(next.autoUpdate), checkIntervalHours: next.checkIntervalHours, lastCheckedAt: next.lastCheckedAt, catalog, customRules };
+    const value: BillingSettings = { autoUpdate: Boolean(next.autoUpdate), checkIntervalHours: next.checkIntervalHours, lastCheckedAt: next.lastCheckedAt, catalog, customRules, providerBindings, balanceWarning };
     await this.settings.patch({ billing: value });
     return this.get();
   }
 
-  private defaults(): BillingSettings { return { autoUpdate: true, checkIntervalHours: 24, lastCheckedAt: null, catalog: structuredClone(this.builtinCatalog), customRules: [] }; }
+  private defaults(): BillingSettings { return { autoUpdate: true, checkIntervalHours: 24, lastCheckedAt: null, catalog: structuredClone(this.builtinCatalog), customRules: [], providerBindings: [], balanceWarning: structuredClone(DEFAULT_BALANCE_WARNING) }; }
 }

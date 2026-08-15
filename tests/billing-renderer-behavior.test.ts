@@ -11,7 +11,7 @@ const rule = {
 const settings: BillingSettingsSnapshot = {
   autoUpdate: true, checkIntervalHours: 24, lastCheckedAt: null,
   catalog: { schemaVersion: 2, publishedAt: "2026-08-15T00:00:00Z", source: "test", peakSchedules: [], rules: [rule] },
-  customRules: [], ruleStatuses: { official: "active" }
+  customRules: [], providerBindings: [], balanceWarning: { enabled: false, thresholds: { CNY: "10", USD: "2" } }, ruleStatuses: { official: "active" }
 };
 const report: BillingUsageReport = {
   syncedAt: "2026-08-18T00:00:00Z", collectedAt: "2026-08-18T00:00:00Z", lastUsageAt: "2026-08-18T00:00:00Z",
@@ -20,7 +20,7 @@ const report: BillingUsageReport = {
   sessions: [{
     sessionId: "s", title: "计费行为测试", requests: 1, inputTokens: 10, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4,
     unpricedRequests: 0, lastUsageAt: "2026-08-18T00:00:00Z", totals: [{ currency: "CNY", nanos: "9007199254740993", display: "¥9,007,199.254741" }],
-    models: [{ provider: rule.provider, model: rule.model, requests: 1, inputTokens: 10, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, unpricedRequests: 0, totals: [{ currency: "CNY", nanos: "9007199254740993", display: "¥9,007,199.254741" }], currentPricing: null }]
+    models: [{ provider: rule.provider, model: rule.model, requests: 1, inputTokens: 10, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, unpricedRequests: 0, totals: [{ currency: "CNY", nanos: "9007199254740993", display: "¥9,007,199.254741" }], currentPricing: null, officialPricing: null }]
   }],
   currentTarget: null, warnings: []
 };
@@ -39,6 +39,8 @@ describe("billing renderer behavior", () => {
       getInfo: vi.fn().mockResolvedValue({ themePreference: "light" }),
       getBillingSettings: vi.fn().mockResolvedValue(settings),
       getBillingUsage: vi.fn().mockResolvedValue(report),
+      getDeepSeekBalance: vi.fn().mockResolvedValue({ configured: true, isAvailable: true, balances: [{ currency: "CNY", totalBalance: "110.00", grantedBalance: "10.00", toppedUpBalance: "100.00", totalDisplay: "¥110.00", grantedDisplay: "¥10.00", toppedUpDisplay: "¥100.00", warning: false, warningThreshold: null, warningThresholdDisplay: null }], checkedAt: "2026-08-18T00:00:00Z", stale: false, errorSummary: null }),
+      refreshDeepSeekBalance: vi.fn(), useOfficialBilling: vi.fn(),
       onBillingChanged: vi.fn((listener) => { billingListener = listener; return () => {}; }),
       onBillingUsageChanged: vi.fn((listener) => { usageListener = listener; return () => {}; }),
       onBillingEditRequested: vi.fn(() => () => {}), onInfoChanged: vi.fn(() => () => {})
@@ -50,6 +52,13 @@ describe("billing renderer behavior", () => {
     expect(document.getElementById("officialList")?.textContent).toContain("当前生效");
     expect(document.getElementById("sessionUsageList")?.textContent).toContain("计费行为测试");
     expect(document.getElementById("sessionUsageList")?.textContent).toContain("¥9,007,199.254741");
+    expect(document.getElementById("balanceBody")?.textContent).toContain("¥110.00");
+    expect(document.getElementById("unpricedList")?.textContent).toContain("deepseek-v4-flash");
+    document.getElementById("openAdd")?.click();
+    const dateTrigger = document.querySelector<HTMLButtonElement>("#priceEffectivePicker .date-trigger");
+    dateTrigger?.click();
+    expect(document.querySelector<HTMLElement>("#priceEffectivePicker .date-popover")?.hidden).toBe(false);
+    expect(document.querySelector("#priceEffectivePicker .calendar-days")?.children.length).toBeGreaterThan(27);
 
     billingListener?.({ ...settings, ruleStatuses: { official: "overridden" } });
     expect(document.getElementById("officialList")?.textContent).toContain("已被自定义规则覆盖");
