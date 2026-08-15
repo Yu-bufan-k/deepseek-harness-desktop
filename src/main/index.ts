@@ -15,7 +15,7 @@ import {
   type UpdateChannel,
   type UpdateState
 } from "../shared/contracts.js";
-import type { BillingSettings, BillingUsageIndex, BillingUsageSample } from "../shared/billing.js";
+import { summarizeBillingUsage, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample } from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -47,7 +47,10 @@ let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
 let billing: BillingStore;
 let harnessUpdate: HarnessUpdateState = { phase: "idle", currentVersion: "", latestVersion: null, updateAvailable: false, checkedAt: null, errorSummary: null };
-let billingUsageIndex: BillingUsageIndex = { updatedAt: "", sessions: [] };
+let billingUsageIndex: BillingUsageIndex = { collectedAt: "", sessions: [] };
+let billingUsageWarnings: string[] = [];
+let billingCurrentTarget: BillingModelTarget | undefined;
+let billingUsageReport: BillingUsageReport;
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
 let startupCompleting = false;
@@ -135,8 +138,12 @@ function broadcastInfo(): void {
 
 function broadcastBilling(): void {
   const value = billing.get();
+  const report = refreshBillingReport();
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(IPC.billingChanged, value);
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC.billingChanged, value);
+      window.webContents.send(IPC.billingUsageChanged, report);
+    }
   }
 }
 
@@ -292,28 +299,41 @@ function isBillingSample(value: unknown): value is BillingUsageSample {
   if (!value || typeof value !== "object") return false;
   const sample = value as Record<string, unknown>;
   return typeof sample.provider === "string" && typeof sample.model === "string"
-    && ["time", "uncachedInputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"]
-      .every((key) => typeof sample[key] === "number" && Number.isFinite(sample[key]) && (sample[key] as number) >= 0);
+    && typeof sample.time === "number" && Number.isFinite(sample.time) && sample.time >= 0
+    && ["uncachedInputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"]
+      .every((key) => typeof sample[key] === "number" && Number.isSafeInteger(sample[key]) && (sample[key] as number) >= 0);
 }
 
-function normalizeBillingUsageIndex(value: unknown): BillingUsageIndex {
+function normalizeBillingUsageIndex(value: unknown): { index: BillingUsageIndex; warnings: string[] } {
   if (!value || typeof value !== "object") throw new Error("无效的用量汇总");
-  const candidate = value as { sessions?: unknown };
-  if (!Array.isArray(candidate.sessions) || candidate.sessions.length > 10_000) throw new Error("无效的会话用量列表");
-  return {
-    updatedAt: new Date().toISOString(),
-    sessions: candidate.sessions.map((entry) => {
+  const candidate = value as { collectedAt?: unknown; sessions?: unknown };
+  if (!Array.isArray(candidate.sessions)) throw new Error("无效的会话用量列表");
+  const warnings: string[] = [];
+  const droppedSessions = Math.max(0, candidate.sessions.length - 10_000);
+  if (droppedSessions) warnings.push(`有 ${droppedSessions} 个对话超过单次同步安全上限，未纳入本次汇总，请缩小工作区历史范围后重试。`);
+  let droppedSamples = 0;
+  const sessions = candidate.sessions.slice(-10_000).map((entry) => {
       if (!entry || typeof entry !== "object") throw new Error("无效的会话用量");
       const session = entry as { sessionId?: unknown; title?: unknown; samples?: unknown };
       if (typeof session.sessionId !== "string" || typeof session.title !== "string" || !Array.isArray(session.samples)) throw new Error("无效的会话用量");
-      if (session.samples.length > 100_000 || !session.samples.every(isBillingSample)) throw new Error("无效的请求用量");
-      return { sessionId: session.sessionId.slice(0, 256), title: session.title.slice(0, 500), samples: session.samples };
-    })
-  };
+      const samples = session.samples.slice(-100_000);
+      droppedSamples += session.samples.length - samples.length;
+      if (!samples.every(isBillingSample)) throw new Error("无效的请求用量");
+      return { sessionId: session.sessionId.slice(0, 256), title: session.title.slice(0, 500), samples };
+    });
+  if (droppedSamples) warnings.push(`有 ${droppedSamples} 条较早请求超过单对话安全上限，未纳入本次汇总。`);
+  const collectedAt = typeof candidate.collectedAt === "string" && Number.isFinite(Date.parse(candidate.collectedAt)) ? candidate.collectedAt : new Date().toISOString();
+  return { index: { collectedAt, sessions }, warnings };
+}
+
+function refreshBillingReport(): BillingUsageReport {
+  billingUsageReport = summarizeBillingUsage(billing.get(), billingUsageIndex, new Date().toISOString(), billingCurrentTarget, billingUsageWarnings);
+  return billingUsageReport;
 }
 
 function broadcastBillingUsage(): void {
-  if (billingWindow && !billingWindow.isDestroyed()) billingWindow.webContents.send(IPC.billingUsageChanged, billingUsageIndex);
+  const report = refreshBillingReport();
+  for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send(IPC.billingUsageChanged, report);
 }
 
 function billingTarget(value: unknown): BillingModelTarget | undefined {
@@ -519,7 +539,7 @@ function registerIpc(): void {
   handle(IPC.removeCredential, (_event, name: string) => credentials.remove(name));
   handle(IPC.getBillingSettings, () => billing.get());
   handle(IPC.setBillingSettings, async (_event, value: BillingSettings) => {
-    const saved = await billing.save(value);
+    const saved = await billing.saveUserSettings(value);
     broadcastBilling();
     return saved;
   });
@@ -528,10 +548,14 @@ function registerIpc(): void {
     broadcastBilling();
     return result;
   });
-  handle(IPC.getBillingUsage, () => billingUsageIndex);
-  handle(IPC.reportBillingUsage, (_event, value: unknown) => {
-    billingUsageIndex = normalizeBillingUsageIndex(value);
+  handle(IPC.getBillingUsage, () => refreshBillingReport());
+  handle(IPC.reportBillingUsage, (_event, value: unknown, targetValue?: unknown) => {
+    const normalized = normalizeBillingUsageIndex(value);
+    billingUsageIndex = normalized.index;
+    billingUsageWarnings = normalized.warnings;
+    billingCurrentTarget = billingTarget(targetValue);
     broadcastBillingUsage();
+    return billingUsageReport;
   });
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
     try { assertTrustedIpc(event); } catch { return; }
@@ -621,6 +645,7 @@ void app.whenReady().then(async () => {
   await settings.load();
   billing = new BillingStore(settings, app.getAppPath());
   await billing.load();
+  billingUsageReport = summarizeBillingUsage(billing.get(), billingUsageIndex, new Date().toISOString());
   credentials = new CredentialStore(userData);
   updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
   directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);

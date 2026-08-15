@@ -81,8 +81,16 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm dist:mac
 - 为任意供应商路由和模型添加自定义价格，或标记为免费/仅统计 Token。
 - 多币种分别展示，不进行未经配置的汇率换算。
 - 未知第三方价格显示“未配置单价”，不会套用 DeepSeek 官方价。
+- 自定义规则可分别设置未缓存输入、缓存读取、缓存写入和输出单价，并可指定明确的开始、结束时间。
+- 金额在主进程中以整数纳币单位计算和汇总；会话侧栏与完整用量窗口只展示同一份计价结果。
 
-`.github/workflows/check-pricing.yml` 每天检查官方页面的关键价格值。检测到变化时会创建一次去重的 GitHub Issue，维护者核对后更新 `pricing/prices.json`；桌面端随后即可自动或手动获取新清单。公开仓库使用标准 GitHub-hosted runner 时，这类轻量定时任务通常不产生 Actions 费用。
+### 价格清单信任与回退
+
+远程清单不是 DeepSeek 官方 API，而是本项目维护者根据官方价格页人工复核后发布的社区清单。应用依次尝试 GitHub Raw 和 jsDelivr 镜像，但不会因为来源可访问就直接信任内容：`prices.signed.json` 必须通过应用内置 Ed25519 公钥验证，并通过 schema、有效期和 append-only 历史保护后才会被接受。所有远程来源失败或签名无效时，应用继续使用已缓存清单或安装包内置清单；用户自定义规则不会被远程更新覆盖。
+
+维护者修改 `pricing/prices.json` 后，`Sign pricing catalog` 工作流使用仓库 Secret `PRICING_SIGNING_PRIVATE_KEY` 生成签名信封。私钥不得提交到仓库；轮换密钥需要随桌面应用发布新的公钥。PR 和本地构建通过 `pnpm pricing:verify` 检查明文清单与签名信封完全一致。
+
+`.github/workflows/check-pricing.yml` 每天检查官方页面的关键价格值。检测到变化时会创建一次去重的 GitHub Issue，维护者核对并签署 `pricing/prices.json` 后，桌面端才会自动或手动接受新清单。页面改版、镜像污染或未经签名的提交都不会直接改变用户账本。公开仓库使用标准 GitHub-hosted runner 时，这类轻量定时任务通常不产生 Actions 费用。
 
 ## 启动过程
 

@@ -26,6 +26,10 @@ describe("renderer pages", () => {
     expect(html).toContain("onBillingUsageChanged");
     expect(html).toContain("onBillingEditRequested");
     expect(html).toContain("开始生效时间");
+    expect(html).toContain("缓存写入价格与未缓存输入相同");
+    expect(html).toContain("结束生效时间（可选）");
+    expect(html).not.toContain("function selectRule");
+    expect(html).not.toContain("function costOf");
   });
 
   it("provides a responsive session billing rail with per-model history", async () => {
@@ -33,10 +37,13 @@ describe("renderer pages", () => {
     expect(source).toContain("findComposerBoundary");
     expect(source).toContain("available >= 352");
     expect(source).toContain("模型费用 · 点击查看详情");
-    expect(source).toContain("model.totals");
+    expect(source).toContain("session.models.map");
     expect(source).toContain("modelDirectories.directoryFor(sessionId).store");
     expect(source).toContain("reportBillingUsage");
     expect(source).toContain("修正此模型价格");
+    expect(source).not.toContain("const selectRule");
+    expect(source).not.toContain("const costOf");
+    expect(source).not.toContain("const ratesAt");
   });
 
   it("keeps separate retry requests additive in the billing projection", async () => {

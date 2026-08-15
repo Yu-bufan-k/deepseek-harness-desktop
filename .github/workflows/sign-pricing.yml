@@ -1,0 +1,34 @@
+name: Sign pricing catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - pricing/prices.json
+      - scripts/sign-pricing.mjs
+      - pricing/catalog-public-key.pem
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Sign reviewed catalog
+        run: node scripts/sign-pricing.mjs
+        env:
+          PRICING_SIGNING_PRIVATE_KEY: ${{ secrets.PRICING_SIGNING_PRIVATE_KEY }}
+      - name: Commit signed envelope
+        run: |
+          if git diff --quiet -- pricing/prices.signed.json; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pricing/prices.signed.json
+          git commit -m "chore: sign pricing catalog"
+          git push

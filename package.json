@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "pricing:verify": "node scripts/sign-pricing.mjs --verify",
     "package:stage": "node scripts/prepare-package.mjs",
     "package:sync-peers": "node scripts/sync-packaging-peers.mjs",
     "pack": "pnpm build && pnpm package:stage && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --projectDir .pack-app --config ../electron-builder.yml --dir",

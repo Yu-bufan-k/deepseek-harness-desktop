@@ -1,0 +1,109 @@
+{
+  "algorithm": "Ed25519",
+  "keyId": "pricing-ed25519-v1",
+  "catalog": {
+    "schemaVersion": 2,
+    "publishedAt": "2026-08-15T00:00:00.000Z",
+    "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+    "peakSchedules": [
+      {
+        "id": "deepseek-cn-business-hours-v1",
+        "label": "DeepSeek 中国区高峰时段",
+        "timezone": "Asia/Shanghai",
+        "windows": [
+          {
+            "startMinute": 540,
+            "endMinute": 720
+          },
+          {
+            "startMinute": 840,
+            "endMinute": 1080
+          }
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "id": "deepseek-v4-flash-before-2026-08-17",
+        "provider": "deepseek-official",
+        "model": "deepseek-v4-flash",
+        "label": "DeepSeek V4 Flash（2026-08-17 前）",
+        "currency": "CNY",
+        "mode": "official",
+        "effectiveFrom": "2026-01-01T00:00:00+08:00",
+        "effectiveTo": "2026-08-17T00:00:00+08:00",
+        "rates": {
+          "input": 1,
+          "cacheRead": 0.02,
+          "cacheWrite": 1,
+          "output": 2
+        },
+        "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+      },
+      {
+        "id": "deepseek-v4-pro-before-2026-08-17",
+        "provider": "deepseek-official",
+        "model": "deepseek-v4-pro",
+        "label": "DeepSeek V4 Pro（2026-08-17 前）",
+        "currency": "CNY",
+        "mode": "official",
+        "effectiveFrom": "2026-01-01T00:00:00+08:00",
+        "effectiveTo": "2026-08-17T00:00:00+08:00",
+        "rates": {
+          "input": 3,
+          "cacheRead": 0.025,
+          "cacheWrite": 3,
+          "output": 6
+        },
+        "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+      },
+      {
+        "id": "deepseek-v4-flash-2026-08-17",
+        "provider": "deepseek-official",
+        "model": "deepseek-v4-flash",
+        "label": "DeepSeek V4 Flash（峰谷价）",
+        "currency": "CNY",
+        "mode": "official",
+        "effectiveFrom": "2026-08-17T00:00:00+08:00",
+        "rates": {
+          "input": 1.5,
+          "cacheRead": 0.05,
+          "cacheWrite": 1.5,
+          "output": 4.5
+        },
+        "peakRates": {
+          "input": 3,
+          "cacheRead": 0.1,
+          "cacheWrite": 3,
+          "output": 9
+        },
+        "peakScheduleId": "deepseek-cn-business-hours-v1",
+        "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+      },
+      {
+        "id": "deepseek-v4-pro-2026-08-17",
+        "provider": "deepseek-official",
+        "model": "deepseek-v4-pro",
+        "label": "DeepSeek V4 Pro（峰谷价）",
+        "currency": "CNY",
+        "mode": "official",
+        "effectiveFrom": "2026-08-17T00:00:00+08:00",
+        "rates": {
+          "input": 4.5,
+          "cacheRead": 0.15,
+          "cacheWrite": 4.5,
+          "output": 13.5
+        },
+        "peakRates": {
+          "input": 9,
+          "cacheRead": 0.3,
+          "cacheWrite": 9,
+          "output": 27
+        },
+        "peakScheduleId": "deepseek-cn-business-hours-v1",
+        "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+      }
+    ]
+  },
+  "signature": "b+NFJT451bJzrQBGeosFUzUHnN278uN9OCFuqMhGvJ5byjKhaohEkfPin3FRl5tEYyr+4epMCPwEfqsqEvh5AA=="
+}

@@ -12,23 +12,10 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
     const RESULT = "desktop:open-workspace-result";
     const React = require("react");
     const inject = ["workspaces", "sessions", "slots", "modelDirectories"];
-    const selectRule = (settings, sample) => [...settings.catalog.rules, ...settings.customRules]
-      .filter((rule) => rule.provider.trim().toLowerCase() === sample.provider.trim().toLowerCase()
-        && rule.model.trim().toLowerCase() === sample.model.trim().toLowerCase()
-        && Date.parse(rule.effectiveFrom) <= sample.time)
-      .sort((a, b) => Number(b.mode !== "official") - Number(a.mode !== "official") || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
-    const ratesAt = (rule, time) => {
-      const clock = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(time);
-      const inWindow = (window) => window.start < window.end ? clock >= window.start && clock < window.end : clock >= window.start || clock < window.end;
-      return rule.peakRates && rule.peakWindows?.some(inWindow) ? rule.peakRates : rule.rates;
+    const money = (currency, nanos) => {
+      const value = Number(BigInt(nanos)) / 1e9;
+      return new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
     };
-    const costOf = (rule, sample) => {
-      if (rule.mode === "free") return 0;
-      const rates = ratesAt(rule, sample.time);
-      return (sample.uncachedInputTokens * rates.input + sample.cacheReadTokens * rates.cacheRead
-        + sample.cacheWriteTokens * rates.cacheWrite + sample.outputTokens * rates.output) / 1e6;
-    };
-    const money = (currency, value) => new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
     const compactTokens = (value) => value >= 1e6 ? (value / 1e6).toFixed(1) + "M" : value >= 1e3 ? (value / 1e3).toFixed(value >= 1e4 ? 0 : 1) + "K" : String(value);
     function UsageMeter({ useProjection, modelDirectory, sessionsList, sessionId }) {
       const usage = useProjection("billingUsage") ?? [];
@@ -40,17 +27,14 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         (listener) => sessionsList.subscribe(listener),
         () => sessionsList.getSnapshot()
       );
-      const [settings, setSettings] = React.useState(null);
+      const [report, setReport] = React.useState(null);
+      const [billingRevision, setBillingRevision] = React.useState(0);
       const [wide, setWide] = React.useState(false);
       const [open, setOpen] = React.useState(false);
       const [detail, setDetail] = React.useState(null);
       const rootRef = React.useRef(null);
-      React.useEffect(() => {
-        let alive = true;
-        window.desktop?.getBillingSettings().then((value) => { if (alive) setSettings(value); }).catch(() => {});
-        const dispose = window.desktop?.onBillingChanged((value) => setSettings(value));
-        return () => { alive = false; dispose?.(); };
-      }, []);
+      const selected = modelState?.current ?? usage[usage.length - 1] ?? null;
+      React.useEffect(() => window.desktop?.onBillingChanged(() => setBillingRevision((value) => value + 1)), []);
       React.useEffect(() => {
         const sessions = (sessionsState.ids ?? []).map((id) => {
           const summary = sessionsState.byId?.[id] ?? {};
@@ -64,8 +48,13 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         if (sessionId && !sessions.some((session) => session.sessionId === sessionId)) {
           sessions.push({ sessionId, title: "当前对话", samples: usage });
         }
-        window.desktop?.reportBillingUsage({ updatedAt: new Date().toISOString(), sessions }).catch(() => {});
-      }, [sessionsState, sessionId, usage]);
+        let alive = true;
+        const target = selected?.provider && selected?.model ? { provider: selected.provider, model: selected.model } : undefined;
+        window.desktop?.reportBillingUsage({ collectedAt: new Date().toISOString(), sessions }, target)
+          .then((value) => { if (alive) setReport(value); })
+          .catch((error) => { if (alive) setReport({ error: error instanceof Error ? error.message : String(error) }); });
+        return () => { alive = false; };
+      }, [sessionsState, sessionId, usage, selected?.provider, selected?.model, billingRevision]);
       React.useEffect(() => {
         let frame = 0;
         let lastFit = null;
@@ -112,52 +101,32 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         document.addEventListener("keydown", escape);
         return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
       }, [open, wide, detail]);
-      if (!settings) return null;
-      const totals = new Map();
-      const models = new Map();
-      let unknown = 0;
-      let inputTokens = 0;
-      let outputTokens = 0;
-      for (const sample of usage) {
-        const key = JSON.stringify([sample.provider, sample.model]);
-        const model = models.get(key) ?? { key, provider: sample.provider, model: sample.model, requests: 0, input: 0, cache: 0, output: 0, unknown: 0, totals: new Map() };
-        const sampleInput = sample.uncachedInputTokens + sample.cacheReadTokens + sample.cacheWriteTokens;
-        const sampleCache = sample.cacheReadTokens + sample.cacheWriteTokens;
-        model.requests += 1;
-        model.input += sampleInput;
-        model.cache += sampleCache;
-        model.output += sample.outputTokens;
-        inputTokens += sampleInput;
-        outputTokens += sample.outputTokens;
-        const rule = selectRule(settings, sample);
-        if (!rule) { unknown += 1; model.unknown += 1; }
-        else {
-          const amount = costOf(rule, sample);
-          totals.set(rule.currency, (totals.get(rule.currency) ?? 0) + amount);
-          model.totals.set(rule.currency, (model.totals.get(rule.currency) ?? 0) + amount);
-        }
-        models.set(key, model);
-      }
-      const summary = [...totals].map(([currency, amount]) => money(currency, amount)).join(" + ");
+      const h = React.createElement;
+      if (!report || report.error) return report?.error ? h("span", { className: "dsh-cost-sync-error", title: report.error }, "费用同步失败") : null;
+      const session = report.sessions.find((item) => item.sessionId === sessionId) ?? { requests: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unpricedRequests: 0, totals: [], models: [] };
+      const totals = session.totals;
+      const models = new Map(session.models.map((model) => {
+        const key = JSON.stringify([model.provider, model.model]);
+        return [key, { ...model, key, input: model.inputTokens + model.cacheReadTokens + model.cacheWriteTokens, cache: model.cacheReadTokens + model.cacheWriteTokens, output: model.outputTokens, unknown: model.unpricedRequests, pricing: model.currentPricing, rule: model.currentPricing?.rule ?? null }];
+      }));
+      const unknown = session.unpricedRequests, inputTokens = session.inputTokens + session.cacheReadTokens + session.cacheWriteTokens, outputTokens = session.outputTokens;
+      const summary = totals.map(({ currency, nanos }) => money(currency, nanos)).join(" + ");
       const label = summary || (unknown ? "未计价" : "¥0.0000");
-      const selected = modelState?.current ?? usage[usage.length - 1] ?? null;
       const currentKey = selected?.provider && selected?.model ? JSON.stringify([selected.provider, selected.model]) : null;
       if (currentKey && !models.has(currentKey)) {
-        models.set(currentKey, { key: currentKey, provider: selected.provider, model: selected.model, requests: 0, input: 0, cache: 0, output: 0, unknown: 0, totals: new Map() });
+        models.set(currentKey, { key: currentKey, provider: selected.provider, model: selected.model, requests: 0, input: 0, cache: 0, output: 0, unknown: 0, totals: [], pricing: report.currentTarget?.pricing ?? null, rule: report.currentTarget?.pricing?.rule ?? null });
       }
-      for (const model of models.values()) model.rule = selectRule(settings, { provider: model.provider, model: model.model, time: Date.now() });
       const current = currentKey ? models.get(currentKey) : null;
       const previous = [...models.values()].filter((model) => model.key !== currentKey).reverse();
       const orderedModels = current ? [current, ...previous] : previous;
       const detailModel = detail ? models.get(detail.key) : null;
-      const h = React.createElement;
-      const modelAmount = (model) => [...model.totals].map(([currency, amount]) => money(currency, amount)).join(" + ") || (model.unknown || !model.rule ? "未配置价格" : "¥0.0000");
-      const ruleSummary = (rule) => {
-        if (!rule) return "尚未匹配价格规则";
-        const rates = ratesAt(rule, Date.now());
-        return rule.currency + "/百万 Token · 输入 " + rates.input + " · 缓存 " + rates.cacheRead + " · 输出 " + rates.output;
+      const modelAmount = (model) => model.totals.map(({ currency, nanos }) => money(currency, nanos)).join(" + ") || (model.unknown || !model.rule ? "未配置价格" : "¥0.0000");
+      const ruleSummary = (pricing) => {
+        if (!pricing) return "尚未匹配价格规则";
+        const rates = pricing.rates;
+        return pricing.rule.currency + "/百万 Token · " + (pricing.scheduleLabel ? (pricing.isPeak ? "当前高峰价 · " : "当前空闲价 · ") : "") + "输入 " + rates.input + " · 缓存读取 " + rates.cacheRead + " · 缓存写入 " + rates.cacheWrite + " · 输出 " + rates.output;
       };
-      const amountRows = [...totals].map(([currency, amount]) => h("div", { className: "dsh-cost-total", key: currency }, h("span", null, currency + " 预估"), h("strong", null, money(currency, amount))));
+      const amountRows = totals.map(({ currency, nanos }) => h("div", { className: "dsh-cost-total", key: currency }, h("span", null, currency + " 预估"), h("strong", null, money(currency, nanos))));
       if (!amountRows.length) amountRows.push(h("div", { className: "dsh-cost-total", key: "empty" }, h("span", null, "本会话预估"), h("strong", null, unknown ? "未配置单价" : "¥0.0000")));
       const openModelDetail = (event, model) => {
         const top = Math.min(Math.max(12, event.currentTarget.getBoundingClientRect().top - 8), Math.max(12, window.innerHeight - 356));
@@ -180,16 +149,17 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
             h("div", null, h("strong", null, "用量与费用"), h("small", null, "本地估算 · 供应商账单为准")),
             h("button", { type: "button", className: "dsh-panel-close", "aria-label": "收起侧栏", onClick: () => { setDetail(null); setOpen(false); } }, "×")),
           h("div", { className: "dsh-cost-totals" }, amountRows),
-          usage.length > 0 && h("div", { className: "dsh-session-meta" },
-            h("span", null, usage.length + " 次请求"), h("span", null, "输入 " + compactTokens(inputTokens)), h("span", null, "输出 " + compactTokens(outputTokens))),
+          session.requests > 0 && h("div", { className: "dsh-session-meta" },
+            h("span", null, session.requests + " 次请求"), h("span", null, "输入 " + compactTokens(inputTokens)), h("span", null, "输出 " + compactTokens(outputTokens))),
           usage.length === 0 && h("div", { className: "dsh-cost-empty" }, h("strong", null, "还没有模型用量"), h("span", null, "发送消息后，这里会按模型记录 Token 与预估费用。")),
           orderedModels.length > 0 && h("section", { className: "dsh-model-section" }, h("h3", null, "模型费用 · 点击查看详情"), h("div", { className: "dsh-model-list" }, orderedModels.map(modelRow))),
           unknown > 0 && h("div", { className: "dsh-cost-warning" }, unknown + " 次请求未配置价格，金额暂未计入。"),
+          report.warnings?.map((warning) => h("div", { className: "dsh-cost-warning", key: warning }, warning)),
           h("div", { className: "dsh-panel-footer" }, h("button", { type: "button", className: "dsh-cost-manage", onClick: () => window.desktop?.openBilling() }, "查看全部用量与价格规则"))),
         detailModel && h("div", { className: "dsh-model-detail", role: "dialog", "aria-label": detailModel.model + " 用量详情", style: { top: detail.top + "px" } },
           h("div", { className: "dsh-model-detail-head" }, h("div", null, h("strong", null, detailModel.model), h("small", null, detailModel.provider)), h("button", { type: "button", "aria-label": "关闭模型详情", onClick: () => setDetail(null) }, "×")),
           h("div", { className: "dsh-model-detail-price" }, h("span", null, "预估费用"), h("strong", null, modelAmount(detailModel))),
-          h("div", { className: "dsh-model-rule" }, h("span", null, "当前计价规则"), h("strong", null, detailModel.rule?.label || "未配置价格"), h("small", null, ruleSummary(detailModel.rule))),
+          h("div", { className: "dsh-model-rule" }, h("span", null, "当前计价规则"), h("strong", null, detailModel.rule?.label || "未配置价格"), h("small", null, ruleSummary(detailModel.pricing))),
           h("div", { className: "dsh-model-detail-grid" },
             h("div", null, h("span", null, "请求"), h("strong", null, detailModel.requests + " 次")),
             h("div", null, h("span", null, "输入"), h("strong", null, compactTokens(detailModel.input))),
