@@ -21,7 +21,7 @@ describe("DirectoryPickerBridge", () => {
 
     const accepted = await fetch(url, {
       method: "POST",
-      headers: { authorization: `Bearer ${info.token}` }
+      headers: { authorization: `Bearer ${info.token}` },
     });
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toEqual({ path: "C:\\workspace" });
@@ -32,10 +32,13 @@ describe("DirectoryPickerBridge", () => {
     const bridge = new DirectoryPickerBridge(async () => null);
     bridges.push(bridge);
     const info = await bridge.start();
-    const response = await fetch(`http://127.0.0.1:${info.port}/pick-directory`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${info.token}` }
-    });
+    const response = await fetch(
+      `http://127.0.0.1:${info.port}/pick-directory`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${info.token}` },
+      },
+    );
     expect(await response.json()).toEqual({ path: null });
   });
 });

@@ -46,8 +46,18 @@
       "currency": "CNY",
       "mode": "official",
       "effectiveFrom": "2026-08-17T00:00:00+08:00",
-      "rates": { "input": 1.5, "cacheRead": 0.05, "cacheWrite": 1.5, "output": 4.5 },
-      "peakRates": { "input": 3, "cacheRead": 0.1, "cacheWrite": 3, "output": 9 },
+      "rates": {
+        "input": 1.5,
+        "cacheRead": 0.05,
+        "cacheWrite": 1.5,
+        "output": 4.5
+      },
+      "peakRates": {
+        "input": 3,
+        "cacheRead": 0.1,
+        "cacheWrite": 3,
+        "output": 9
+      },
       "peakScheduleId": "deepseek-cn-business-hours-v1",
       "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
     },
@@ -59,8 +69,18 @@
       "currency": "CNY",
       "mode": "official",
       "effectiveFrom": "2026-08-17T00:00:00+08:00",
-      "rates": { "input": 4.5, "cacheRead": 0.15, "cacheWrite": 4.5, "output": 13.5 },
-      "peakRates": { "input": 9, "cacheRead": 0.3, "cacheWrite": 9, "output": 27 },
+      "rates": {
+        "input": 4.5,
+        "cacheRead": 0.15,
+        "cacheWrite": 4.5,
+        "output": 13.5
+      },
+      "peakRates": {
+        "input": 9,
+        "cacheRead": 0.3,
+        "cacheWrite": 9,
+        "output": 27
+      },
       "peakScheduleId": "deepseek-cn-business-hours-v1",
       "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
     }

@@ -1,11 +1,15 @@
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 
-export async function terminateProcessTree(child: ChildProcess | null): Promise<void> {
+export async function terminateProcessTree(
+  child: ChildProcess | null,
+): Promise<void> {
   if (!child?.pid || child.exitCode !== null) return;
   if (process.platform === "win32") {
     await new Promise<void>((resolve) => {
-      execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], () => resolve());
+      execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], () =>
+        resolve(),
+      );
     });
     return;
   }
@@ -16,6 +20,10 @@ export async function terminateProcessTree(child: ChildProcess | null): Promise<
   }
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   if (child.exitCode === null) {
-    try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
   }
 }

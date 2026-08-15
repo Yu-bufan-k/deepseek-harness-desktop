@@ -20,7 +20,7 @@ const defaults: DesktopSettings = {
   updateRepository: null,
   lastGoodVersion: null,
   pendingVersion: null,
-  failedStarts: 0
+  failedStarts: 0,
 };
 
 export class SettingsStore {
@@ -33,7 +33,9 @@ export class SettingsStore {
 
   async load(): Promise<DesktopSettings> {
     try {
-      const raw = JSON.parse(await readFile(this.filePath, "utf8")) as Partial<DesktopSettings>;
+      const raw = JSON.parse(
+        await readFile(this.filePath, "utf8"),
+      ) as Partial<DesktopSettings>;
       this.value = { ...defaults, ...raw };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -48,7 +50,11 @@ export class SettingsStore {
   async patch(update: Partial<DesktopSettings>): Promise<DesktopSettings> {
     this.value = { ...this.value, ...update };
     await mkdir(path.dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(this.value, null, 2)}\n`, "utf8");
+    await writeFile(
+      this.filePath,
+      `${JSON.stringify(this.value, null, 2)}\n`,
+      "utf8",
+    );
     return this.get();
   }
 }

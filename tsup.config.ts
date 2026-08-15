@@ -9,7 +9,7 @@ export default defineConfig([
     bundle: true,
     sourcemap: true,
     external: ["electron", "@deepseek-ai/dsh"],
-    clean: false
+    clean: false,
   },
   {
     entry: { "preload/index": "src/preload/index.ts" },
@@ -19,16 +19,19 @@ export default defineConfig([
     bundle: true,
     sourcemap: true,
     external: ["electron"],
-    clean: false
+    clean: false,
   },
   {
-    entry: { "sidecar/electron-directory-picker": "src/sidecar/electron-directory-picker.ts" },
+    entry: {
+      "sidecar/electron-directory-picker":
+        "src/sidecar/electron-directory-picker.ts",
+    },
     format: ["esm"],
     platform: "node",
-    target: "node24",
+    target: "node22",
     bundle: true,
     sourcemap: true,
     external: ["@deepseek-ai/dsh-host-directory-picker"],
-    clean: false
-  }
+    clean: false,
+  },
 ]);

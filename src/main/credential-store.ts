@@ -13,13 +13,17 @@ export class CredentialStore {
 
   private validateName(name: string): void {
     if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(name)) {
-      throw new Error("Credential name must be an uppercase environment variable name");
+      throw new Error(
+        "Credential name must be an uppercase environment variable name",
+      );
     }
   }
 
   private async read(): Promise<CredentialFile> {
     try {
-      return JSON.parse(await readFile(this.filePath, "utf8")) as CredentialFile;
+      return JSON.parse(
+        await readFile(this.filePath, "utf8"),
+      ) as CredentialFile;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
       throw error;
@@ -28,12 +32,15 @@ export class CredentialStore {
 
   private async write(value: CredentialFile): Promise<void> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(this.filePath, `${JSON.stringify(value, null, 2)}\n`, {
+      mode: 0o600,
+    });
   }
 
   async set(name: string, value: string): Promise<void> {
     this.validateName(name);
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("System credential encryption is unavailable");
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error("System credential encryption is unavailable");
     const credentials = await this.read();
     credentials[name] = safeStorage.encryptString(value).toString("base64");
     await this.write(credentials);
@@ -49,7 +56,11 @@ export class CredentialStore {
     if (!safeStorage.isEncryptionAvailable()) return null;
     const encoded = (await this.read())[name];
     if (!encoded) return null;
-    try { return safeStorage.decryptString(Buffer.from(encoded, "base64")); } catch { return null; }
+    try {
+      return safeStorage.decryptString(Buffer.from(encoded, "base64"));
+    } catch {
+      return null;
+    }
   }
 
   async remove(name: string): Promise<void> {
@@ -64,7 +75,9 @@ export class CredentialStore {
     const result: Record<string, string> = {};
     for (const [name, encoded] of Object.entries(await this.read())) {
       try {
-        result[name] = safeStorage.decryptString(Buffer.from(encoded, "base64"));
+        result[name] = safeStorage.decryptString(
+          Buffer.from(encoded, "base64"),
+        );
       } catch {
         // Ignore entries that cannot be decrypted for the current OS user.
       }

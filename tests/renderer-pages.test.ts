@@ -2,28 +2,50 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 async function scriptsOf(file: string): Promise<string[]> {
-  const html = await readFile(new URL(`../src/renderer/${file}`, import.meta.url), "utf8");
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1] ?? "");
+  const html = await readFile(
+    new URL(`../src/renderer/${file}`, import.meta.url),
+    "utf8",
+  );
+  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+    (match) => match[1] ?? "",
+  );
+}
+
+// Prettier owns formatting, so whitespace (indentation/newlines) is not a
+// stable part of the source. Collapse runs of whitespace to a single space so
+// the token-sequence assertions below survive any reformat.
+function flat(source: string): string {
+  return source.replace(/\s+/g, " ");
 }
 
 describe("renderer pages", () => {
   it("keeps billing out of general settings", async () => {
-    const html = await readFile(new URL("../src/renderer/settings.html", import.meta.url), "utf8");
+    const html = flat(
+      await readFile(
+        new URL("../src/renderer/settings.html", import.meta.url),
+        "utf8",
+      ),
+    );
     const scripts = await scriptsOf("settings.html");
-    expect(html).not.toContain("id=\"billingAuto\"");
-    expect(html).not.toContain("id=\"priceList\"");
+    expect(html).not.toContain('id="billingAuto"');
+    expect(html).not.toContain('id="priceList"');
     expect(html).toContain("检查 Harness 新版");
     expect(() => Function(scripts[0]!)).not.toThrow();
   });
 
   it("parses the standalone billing page script", async () => {
-    const html = await readFile(new URL("../src/renderer/billing.html", import.meta.url), "utf8");
+    const html = flat(
+      await readFile(
+        new URL("../src/renderer/billing.html", import.meta.url),
+        "utf8",
+      ),
+    );
     const scripts = await scriptsOf("billing.html");
     expect(scripts).toHaveLength(1);
     expect(() => Function(scripts[0]!)).not.toThrow();
-    expect(html).toContain("用量总览");
-    expect(html).toContain("全部对话预估费用");
-    expect(html).toContain("onBillingUsageChanged");
+    expect(html).toContain("账户余额");
+    expect(html).toContain("计费与价格规则");
+    expect(html).not.toContain("onBillingUsageChanged");
     expect(html).toContain("onBillingEditRequested");
     expect(html).toContain("开始生效时间");
     expect(html).toContain("缓存写入价格与未缓存输入相同");
@@ -38,7 +60,12 @@ describe("renderer pages", () => {
   });
 
   it("provides a responsive session billing rail with per-model history", async () => {
-    const source = await readFile(new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url), "utf8");
+    const source = flat(
+      await readFile(
+        new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url),
+        "utf8",
+      ),
+    );
     expect(source).toContain("findComposerBoundary");
     expect(source).toContain("available >= 352");
     expect(source).toContain("模型费用 · 点击查看详情");
@@ -62,24 +89,69 @@ describe("renderer pages", () => {
   });
 
   it("keeps separate retry requests additive in the billing projection", async () => {
-    const source = await readFile(new URL("../plugins/billing/index.js", import.meta.url), "utf8");
+    const source = flat(
+      await readFile(
+        new URL("../plugins/billing/index.js", import.meta.url),
+        "utf8",
+      ),
+    );
     expect(source).toContain("context: event.data, last: null");
     expect(source).toContain("stateVersion: 3");
     expect(source).toContain("revision: state.revision + 1");
   });
 
   it("keeps the billing application-menu label unclipped", async () => {
-    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
-    expect(source).toContain('label: "用量与费用", accelerator: "CmdOrCtrl+Shift+U"');
-    expect(source).not.toContain('label: "用量与费用…"');
+    const source = flat(
+      await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8"),
+    );
+    expect(source).toContain(
+      'label: "计费与价格规则", accelerator: "CmdOrCtrl+Shift+U"',
+    );
+    expect(source).not.toContain('label: "计费与价格规则…"');
+  });
+
+  it("keeps the workbench window menu-free so it cannot spawn more windows", async () => {
+    const source = flat(
+      await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8"),
+    );
+    expect(source).toContain("workbenchWindow.setMenu(null)");
+    expect(source).not.toContain("autoHideMenuBar");
+    expect(source).not.toContain("setMenuBarVisibility");
+  });
+
+  it("opens lightweight panels as parent-attached popup windows without their own menu", async () => {
+    const source = flat(
+      await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8"),
+    );
+    expect(source).toContain("createPopupWindow");
+    expect(source).toContain("parent: parentWindow");
+    expect(source).toContain("BrowserWindow.getFocusedWindow()");
+    expect(source).toContain("window.setMenu(null);");
+    expect(source).toContain("secureWindow(window);");
+    expect(source).toContain("destroyPopupsOf");
+    expect(source).toContain('view: "settings", mode: "popup"');
+    expect(source).toContain('view: "billing", mode: "popup"');
   });
 
   it("builds the typed workbench and Harness bridges from source", async () => {
-    const workbench = await readFile(new URL("../src/ui/main.tsx", import.meta.url), "utf8");
-    const sidecar = await readFile(new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url), "utf8");
+    const workbench = flat(
+      await readFile(new URL("../src/ui/main.tsx", import.meta.url), "utf8"),
+    );
+    const sidecar = flat(
+      await readFile(
+        new URL("../src/sidecar/electron-directory-picker.ts", import.meta.url),
+        "utf8",
+      ),
+    );
     expect(workbench).toContain("DiffEditor");
     expect(workbench).toContain("discoverVisionTools");
     expect(workbench).toContain("撤销此处");
+    expect(workbench).toContain('className="theme-card"');
+    expect(workbench).toContain("theme-preview preview-");
+    expect(workbench).toContain('query.get("mode") === "popup"');
+    expect(workbench).toContain("window.desktop.openBilling()");
+    expect(workbench).toContain("window.desktop.openSettings()");
+    expect(workbench).not.toContain('id: "settings", label: "设置"');
     expect(sidecar).toContain("createChangeBatch");
     expect(sidecar).toContain("desktop_vision_context");
     expect(sidecar).toContain('id: "desktop-vision-bridge"');

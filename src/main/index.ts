@@ -1,7 +1,16 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { unwatchFile, watchFile } from "node:fs";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainInvokeEvent } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
 import log from "electron-log/main.js";
 import {
   IPC,
@@ -14,9 +23,20 @@ import {
   type OpenWorkspaceResult,
   type ThemePreference,
   type UpdateChannel,
-  type UpdateState
+  type UpdateState,
 } from "../shared/contracts.js";
-import { billingSettingsSnapshot, BillingUsageSummarizer, decimalBillingAmountToNanos, formatDecimalBillingMoney, restoreOfficialBilling, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample, type BillingUsageSync } from "../shared/billing.js";
+import {
+  billingSettingsSnapshot,
+  BillingUsageSummarizer,
+  decimalBillingAmountToNanos,
+  formatDecimalBillingMoney,
+  restoreOfficialBilling,
+  type BillingSettings,
+  type BillingUsageIndex,
+  type BillingUsageReport,
+  type BillingUsageSample,
+  type BillingUsageSync,
+} from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -39,13 +59,26 @@ const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。"
 const SPLASH_MINIMUM_MS = 3600;
 const windows = new Set<BrowserWindow>();
 const integrationReadyWindows = new WeakSet<BrowserWindow>();
-const pendingWorkspaceOpens = new Map<string, OpenWorkspaceRequest & { sentTo: number | null }>();
+const pendingWorkspaceOpens = new Map<
+  string,
+  OpenWorkspaceRequest & { sentTo: number | null }
+>();
 const earlyOpenPaths: string[] = [];
 let workbenchWindow: BrowserWindow | null = null;
 let billingWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
+let usageWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
-const workspaceContexts = new Map<number, { sessionId: string; path: string; windowId: number }>();
-let activeWorkspaceContext: { sessionId: string; path: string; windowId: number } | null = null;
+const popupWindows = new Map<BrowserWindow, BrowserWindow | undefined>();
+const workspaceContexts = new Map<
+  number,
+  { sessionId: string; path: string; windowId: number }
+>();
+let activeWorkspaceContext: {
+  sessionId: string;
+  path: string;
+  windowId: number;
+} | null = null;
 let harness: HarnessManager;
 let settings: SettingsStore;
 let credentials: CredentialStore;
@@ -56,9 +89,19 @@ let updates: UpdateManager;
 let themeStore: HarnessThemeStore;
 let directoryPickerBridge: DirectoryPickerBridge;
 let billing: BillingStore;
-let harnessUpdate: HarnessUpdateState = { phase: "idle", currentVersion: "", latestVersion: null, updateAvailable: false, checkedAt: null, errorSummary: null };
+let harnessUpdate: HarnessUpdateState = {
+  phase: "idle",
+  currentVersion: "",
+  latestVersion: null,
+  updateAvailable: false,
+  checkedAt: null,
+  errorSummary: null,
+};
 let billingUsageIndex: BillingUsageIndex = { collectedAt: "", sessions: [] };
-const billingUsageSessions = new Map<string, BillingUsageIndex["sessions"][number]>();
+const billingUsageSessions = new Map<
+  string,
+  BillingUsageIndex["sessions"][number]
+>();
 const billingUsageSummarizer = new BillingUsageSummarizer();
 let billingUsageWarnings: string[] = [];
 let billingCurrentTarget: BillingModelTarget | undefined;
@@ -68,23 +111,42 @@ let quitting = false;
 let startupCompleting = false;
 let splashShownAt = 0;
 let resolveSplashAnimation!: () => void;
-const splashAnimation = new Promise<void>((resolve) => { resolveSplashAnimation = resolve; });
+const splashAnimation = new Promise<void>((resolve) => {
+  resolveSplashAnimation = resolve;
+});
 
 app.setName(PRODUCT_NAME);
 if (!app.requestSingleInstanceLock()) app.quit();
 
-function preloadPath(): string { return path.join(__dirname, "..", "preload", "index.cjs"); }
-function rendererPath(file: string): string { return path.join(__dirname, "..", "renderer", file); }
-function appIconPath(): string { return rendererPath(path.join("assets", "deepseek-mark.png")); }
-function directoryPickerPluginPath(): string { return path.join(__dirname, "..", "sidecar", "electron-directory-picker.js"); }
-function billingPluginPath(): string { return path.join(__dirname, "..", "plugins", "billing", "index.js"); }
-function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+function preloadPath(): string {
+  return path.join(__dirname, "..", "preload", "index.cjs");
+}
+function rendererPath(file: string): string {
+  return path.join(__dirname, "..", "renderer", file);
+}
+function appIconPath(): string {
+  return rendererPath(path.join("assets", "deepseek-mark.png"));
+}
+function directoryPickerPluginPath(): string {
+  return path.join(__dirname, "..", "sidecar", "electron-directory-picker.js");
+}
+function billingPluginPath(): string {
+  return path.join(__dirname, "..", "plugins", "billing", "index.js");
+}
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 function launchArgumentsForPath(filePath: string): string[] {
-  return app.isPackaged ? [process.execPath, filePath] : [process.execPath, ".", filePath];
+  return app.isPackaged
+    ? [process.execPath, filePath]
+    : [process.execPath, ".", filePath];
 }
 
 function focusHarnessWindow(window?: BrowserWindow | null): void {
-  const target = window && !window.isDestroyed() ? window : [...windows].find((item) => !item.isDestroyed());
+  const target =
+    window && !window.isDestroyed()
+      ? window
+      : [...windows].find((item) => !item.isDestroyed());
   if (!target) return;
   if (target.isMinimized()) target.restore();
   target.show();
@@ -97,16 +159,27 @@ function sendPendingWorkspaceOpens(window: BrowserWindow): void {
     request.sentTo = window.id;
     window.webContents.send(IPC.openWorkspace, {
       requestId: request.requestId,
-      path: request.path
+      path: request.path,
     } satisfies OpenWorkspaceRequest);
   }
 }
 
-async function queueLaunchDirectories(argv: readonly string[], workingDirectory: string): Promise<void> {
-  const directories = await resolveLaunchDirectories(argv, workingDirectory, app.isPackaged);
+async function queueLaunchDirectories(
+  argv: readonly string[],
+  workingDirectory: string,
+): Promise<void> {
+  const directories = await resolveLaunchDirectories(
+    argv,
+    workingDirectory,
+    app.isPackaged,
+  );
   for (const directory of directories) {
     const requestId = randomUUID();
-    pendingWorkspaceOpens.set(requestId, { requestId, path: directory, sentTo: null });
+    pendingWorkspaceOpens.set(requestId, {
+      requestId,
+      path: directory,
+      sentTo: null,
+    });
     log.info(`[desktop] queued workspace from shell: ${directory}`);
   }
   if (directories.length === 0) return;
@@ -123,14 +196,17 @@ function currentInfo(): DesktopInfo {
     appVersion: app.getVersion(),
     harness: harness.getInfo(),
     update: updates.getState(),
-    harnessUpdate: { ...harnessUpdate, currentVersion: harness.getInfo().version },
+    harnessUpdate: {
+      ...harnessUpdate,
+      currentVersion: harness.getInfo().version,
+    },
     updateChannel: value.updateChannel,
     themePreference: themeStore.getPreference(),
     userDataPath: app.getPath("userData"),
     workspacePath: value.workspacePath,
     activeWorkspacePath: activeWorkspaceContext?.path ?? null,
     logsPath: app.getPath("logs"),
-    unofficialNotice: UNOFFICIAL_NOTICE
+    unofficialNotice: UNOFFICIAL_NOTICE,
   };
 }
 
@@ -160,28 +236,48 @@ function broadcastBilling(): void {
   }
 }
 
-async function deepSeekBalanceSnapshot(force = false): Promise<DeepSeekBalanceSnapshot> {
+async function deepSeekBalanceSnapshot(
+  force = false,
+): Promise<DeepSeekBalanceSnapshot> {
   const snapshot = await deepSeekBalance.get(force);
   const warning = billing.get().balanceWarning;
   return {
     ...snapshot,
     balances: snapshot.balances.map((entry) => {
-      const threshold = warning.enabled ? warning.thresholds[entry.currency] : null;
+      const threshold = warning.enabled
+        ? warning.thresholds[entry.currency]
+        : null;
       return {
         ...entry,
         warningThreshold: threshold,
-        warningThresholdDisplay: threshold ? formatDecimalBillingMoney(entry.currency, threshold) : null,
-        warning: threshold !== null && decimalBillingAmountToNanos(entry.totalBalance) <= decimalBillingAmountToNanos(threshold)
+        warningThresholdDisplay: threshold
+          ? formatDecimalBillingMoney(entry.currency, threshold)
+          : null,
+        warning:
+          threshold !== null &&
+          decimalBillingAmountToNanos(entry.totalBalance) <=
+            decimalBillingAmountToNanos(threshold),
       };
-    })
+    }),
   };
 }
 
 function secureWindow(window: BrowserWindow, harnessOrigin?: string): void {
   const allowNavigation = (target: string): boolean => {
-    if (target.startsWith("file://") && (target.includes("/settings.html") || target.includes("/billing.html") || target.includes("/splash.html") || target.includes("/workbench/index.html"))) return true;
+    if (
+      target.startsWith("file://") &&
+      (target.includes("/settings.html") ||
+        target.includes("/billing.html") ||
+        target.includes("/splash.html") ||
+        target.includes("/workbench/index.html"))
+    )
+      return true;
     if (!harnessOrigin) return false;
-    try { return new URL(target).origin === harnessOrigin; } catch { return false; }
+    try {
+      return new URL(target).origin === harnessOrigin;
+    } catch {
+      return false;
+    }
   };
   window.webContents.on("will-navigate", (event, target) => {
     if (!allowNavigation(target)) event.preventDefault();
@@ -192,10 +288,63 @@ function secureWindow(window: BrowserWindow, harnessOrigin?: string): void {
   });
 }
 
-async function createHarnessWindow(readyInfo?: HarnessInfo, show = true): Promise<BrowserWindow> {
-  const info = readyInfo?.status === "ready"
-    ? readyInfo
-    : harness.getInfo().status === "ready" ? harness.getInfo() : await harness.start();
+function createPopupWindow(
+  options: Electron.BrowserWindowConstructorOptions,
+): BrowserWindow {
+  const parentWindow = BrowserWindow.getFocusedWindow() ?? undefined;
+  const parentBounds = parentWindow?.getBounds();
+  const position =
+    parentBounds && options.width && options.height
+      ? {
+          x: Math.round(
+            parentBounds.x + (parentBounds.width - options.width) / 2,
+          ),
+          y: Math.round(
+            parentBounds.y + (parentBounds.height - options.height) / 2,
+          ),
+        }
+      : {};
+  const window = new BrowserWindow({
+    ...options,
+    ...position,
+    parent: parentWindow,
+    show: false,
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      ...options.webPreferences,
+    },
+  });
+  window.setMenu(null);
+  secureWindow(window);
+  popupWindows.set(window, parentWindow);
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) window.show();
+  });
+  window.on("closed", () => {
+    popupWindows.delete(window);
+  });
+  return window;
+}
+
+function destroyPopupsOf(parent: BrowserWindow): void {
+  for (const [popup, parentWindow] of popupWindows) {
+    if (parentWindow === parent && !popup.isDestroyed()) popup.destroy();
+  }
+}
+
+async function createHarnessWindow(
+  readyInfo?: HarnessInfo,
+  show = true,
+): Promise<BrowserWindow> {
+  const info =
+    readyInfo?.status === "ready"
+      ? readyInfo
+      : harness.getInfo().status === "ready"
+        ? harness.getInfo()
+        : await harness.start();
   if (!info.port) throw new Error("Harness 启动后未提供端口");
   const origin = `http://127.0.0.1:${info.port}`;
   const window = new BrowserWindow({
@@ -211,27 +360,34 @@ async function createHarnessWindow(readyInfo?: HarnessInfo, show = true): Promis
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
-    }
+      webSecurity: true,
+    },
   });
   windows.add(window);
   window.on("focus", () => {
     activeWorkspaceContext = workspaceContexts.get(window.id) ?? null;
     broadcastInfo();
   });
-  window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-    if (isMainFrame) integrationReadyWindows.delete(window);
-  });
+  window.webContents.on(
+    "did-start-navigation",
+    (_event, _url, _isInPlace, isMainFrame) => {
+      if (isMainFrame) integrationReadyWindows.delete(window);
+    },
+  );
   window.on("closed", () => {
     windows.delete(window);
     workspaceContexts.delete(window.id);
-    if (activeWorkspaceContext?.windowId === window.id) activeWorkspaceContext = null;
+    if (activeWorkspaceContext?.windowId === window.id)
+      activeWorkspaceContext = null;
     for (const request of pendingWorkspaceOpens.values()) {
       if (request.sentTo === window.id) request.sentTo = null;
     }
+    destroyPopupsOf(window);
     if (windows.size === 0 && !quitting) {
-      if (workbenchWindow && !workbenchWindow.isDestroyed()) workbenchWindow.destroy();
-      if (billingWindow && !billingWindow.isDestroyed()) billingWindow.destroy();
+      if (workbenchWindow && !workbenchWindow.isDestroyed())
+        workbenchWindow.destroy();
+      for (const popup of popupWindows.keys())
+        if (!popup.isDestroyed()) popup.destroy();
     }
   });
   secureWindow(window, origin);
@@ -260,11 +416,13 @@ async function showSplash(): Promise<void> {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
-    }
+      sandbox: true,
+    },
   });
   secureWindow(splashWindow);
-  splashWindow.on("closed", () => { splashWindow = null; });
+  splashWindow.on("closed", () => {
+    splashWindow = null;
+  });
   await splashWindow.loadFile(rendererPath("splash.html"));
   if (!splashWindow.isDestroyed()) {
     splashShownAt = Date.now();
@@ -276,17 +434,25 @@ async function revealHarnessAfterSplash(info: HarnessInfo): Promise<void> {
   if (startupCompleting || windows.size > 0) return;
   startupCompleting = true;
   try {
-    const remainingAnimationTime = Math.max(0, SPLASH_MINIMUM_MS - (Date.now() - splashShownAt));
+    const remainingAnimationTime = Math.max(
+      0,
+      SPLASH_MINIMUM_MS - (Date.now() - splashShownAt),
+    );
     const [window] = await Promise.all([
       createHarnessWindow(info, false),
       delay(remainingAnimationTime),
-      Promise.race([splashAnimation, delay(SPLASH_MINIMUM_MS + 1400)])
+      Promise.race([splashAnimation, delay(SPLASH_MINIMUM_MS + 1400)]),
     ]);
-    if (splashWindow && !splashWindow.isDestroyed()) splashWindow.webContents.send(IPC.splashReady);
+    if (splashWindow && !splashWindow.isDestroyed())
+      splashWindow.webContents.send(IPC.splashReady);
     await delay(440);
     if (!window.isDestroyed()) window.show();
     if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy();
-    await settings.patch({ lastGoodVersion: app.getVersion(), pendingVersion: null, failedStarts: 0 });
+    await settings.patch({
+      lastGoodVersion: app.getVersion(),
+      pendingVersion: null,
+      failedStarts: 0,
+    });
   } finally {
     startupCompleting = false;
   }
@@ -310,119 +476,300 @@ async function retryStartup(): Promise<HarnessInfo> {
 }
 
 async function showSettings(): Promise<void> {
-  await showWorkbench("settings");
   if (harnessUpdate.phase === "idle") void checkHarnessVersion();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  const window = createPopupWindow({
+    width: 920,
+    height: 780,
+    minWidth: 720,
+    minHeight: 620,
+    icon: appIconPath(),
+    title: `桌面设置 · ${PRODUCT_NAME}`,
+    backgroundColor: "#f7f8fa",
+  });
+  settingsWindow = window;
+  window.on("closed", () => {
+    if (settingsWindow === window) settingsWindow = null;
+  });
+  await window.loadFile(rendererPath(path.join("workbench", "index.html")), {
+    query: { view: "settings", mode: "popup" },
+  });
 }
 
 function isBillingSample(value: unknown): value is BillingUsageSample {
   if (!value || typeof value !== "object") return false;
   const sample = value as Record<string, unknown>;
-  return typeof sample.provider === "string" && typeof sample.model === "string"
-    && typeof sample.time === "number" && Number.isFinite(sample.time) && sample.time >= 0
-    && ["uncachedInputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"]
-      .every((key) => typeof sample[key] === "number" && Number.isSafeInteger(sample[key]) && (sample[key] as number) >= 0);
+  return (
+    typeof sample.provider === "string" &&
+    typeof sample.model === "string" &&
+    typeof sample.time === "number" &&
+    Number.isFinite(sample.time) &&
+    sample.time >= 0 &&
+    [
+      "uncachedInputTokens",
+      "cacheReadTokens",
+      "cacheWriteTokens",
+      "outputTokens",
+    ].every(
+      (key) =>
+        typeof sample[key] === "number" &&
+        Number.isSafeInteger(sample[key]) &&
+        (sample[key] as number) >= 0,
+    )
+  );
 }
 
-function normalizeBillingUsageSync(value: unknown): { sync: BillingUsageSync; warnings: string[] } {
+function normalizeBillingUsageSync(value: unknown): {
+  sync: BillingUsageSync;
+  warnings: string[];
+} {
   if (!value || typeof value !== "object") throw new Error("无效的用量汇总");
-  const candidate = value as { collectedAt?: unknown; sessionIds?: unknown; sessions?: unknown; droppedSessions?: unknown };
-  if (!Array.isArray(candidate.sessions) || !Array.isArray(candidate.sessionIds)) throw new Error("无效的会话用量列表");
-  if (candidate.sessionIds.length > 10_000 || candidate.sessions.length > 10_000) throw new Error("单次同步的会话数量超过安全上限");
+  const candidate = value as {
+    collectedAt?: unknown;
+    sessionIds?: unknown;
+    sessions?: unknown;
+    droppedSessions?: unknown;
+  };
+  if (
+    !Array.isArray(candidate.sessions) ||
+    !Array.isArray(candidate.sessionIds)
+  )
+    throw new Error("无效的会话用量列表");
+  if (
+    candidate.sessionIds.length > 10_000 ||
+    candidate.sessions.length > 10_000
+  )
+    throw new Error("单次同步的会话数量超过安全上限");
   const declaredIds = new Set(candidate.sessionIds);
-  if (!candidate.sessionIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256) || declaredIds.size !== candidate.sessionIds.length) throw new Error("无效或重复的会话 ID");
+  if (
+    !candidate.sessionIds.every(
+      (id) => typeof id === "string" && id.length > 0 && id.length <= 256,
+    ) ||
+    declaredIds.size !== candidate.sessionIds.length
+  )
+    throw new Error("无效或重复的会话 ID");
   const warnings: string[] = [];
-  const droppedSessions = typeof candidate.droppedSessions === "number" && Number.isSafeInteger(candidate.droppedSessions) && candidate.droppedSessions >= 0 ? candidate.droppedSessions : 0;
-  if (droppedSessions) warnings.push(`有 ${droppedSessions} 个较早对话超过安全上限，未纳入本次汇总。`);
+  const droppedSessions =
+    typeof candidate.droppedSessions === "number" &&
+    Number.isSafeInteger(candidate.droppedSessions) &&
+    candidate.droppedSessions >= 0
+      ? candidate.droppedSessions
+      : 0;
+  if (droppedSessions)
+    warnings.push(
+      `有 ${droppedSessions} 个较早对话超过安全上限，未纳入本次汇总。`,
+    );
   let droppedSamples = 0;
   const sessions = candidate.sessions.map((entry) => {
-      if (!entry || typeof entry !== "object") throw new Error("无效的会话用量");
-      const session = entry as { sessionId?: unknown; title?: unknown; revision?: unknown; samples?: unknown };
-      if (typeof session.sessionId !== "string" || !declaredIds.has(session.sessionId) || typeof session.title !== "string"
-        || typeof session.revision !== "string" || !session.revision || session.revision.length > 128 || !Array.isArray(session.samples)) throw new Error("无效的会话用量");
-      const samples = session.samples.slice(-100_000);
-      droppedSamples += session.samples.length - samples.length;
-      if (!samples.every(isBillingSample)) throw new Error("无效的请求用量");
-      return { sessionId: session.sessionId, title: session.title.slice(0, 500), revision: session.revision, samples };
-    });
-  if (new Set(sessions.map((session) => session.sessionId)).size !== sessions.length) throw new Error("单次同步包含重复会话");
-  if (droppedSamples) warnings.push(`有 ${droppedSamples} 条较早请求超过单对话安全上限，未纳入本次汇总。`);
-  const collectedAt = typeof candidate.collectedAt === "string" && Number.isFinite(Date.parse(candidate.collectedAt)) ? candidate.collectedAt : new Date().toISOString();
-  return { sync: { collectedAt, sessionIds: candidate.sessionIds, sessions, droppedSessions }, warnings };
+    if (!entry || typeof entry !== "object") throw new Error("无效的会话用量");
+    const session = entry as {
+      sessionId?: unknown;
+      title?: unknown;
+      revision?: unknown;
+      samples?: unknown;
+    };
+    if (
+      typeof session.sessionId !== "string" ||
+      !declaredIds.has(session.sessionId) ||
+      typeof session.title !== "string" ||
+      typeof session.revision !== "string" ||
+      !session.revision ||
+      session.revision.length > 128 ||
+      !Array.isArray(session.samples)
+    )
+      throw new Error("无效的会话用量");
+    const samples = session.samples.slice(-100_000);
+    droppedSamples += session.samples.length - samples.length;
+    if (!samples.every(isBillingSample)) throw new Error("无效的请求用量");
+    return {
+      sessionId: session.sessionId,
+      title: session.title.slice(0, 500),
+      revision: session.revision,
+      samples,
+    };
+  });
+  if (
+    new Set(sessions.map((session) => session.sessionId)).size !==
+    sessions.length
+  )
+    throw new Error("单次同步包含重复会话");
+  if (droppedSamples)
+    warnings.push(
+      `有 ${droppedSamples} 条较早请求超过单对话安全上限，未纳入本次汇总。`,
+    );
+  const collectedAt =
+    typeof candidate.collectedAt === "string" &&
+    Number.isFinite(Date.parse(candidate.collectedAt))
+      ? candidate.collectedAt
+      : new Date().toISOString();
+  return {
+    sync: {
+      collectedAt,
+      sessionIds: candidate.sessionIds,
+      sessions,
+      droppedSessions,
+    },
+    warnings,
+  };
 }
 
 function applyBillingUsageSync(sync: BillingUsageSync): number {
   const activeIds = new Set(sync.sessionIds);
-  for (const id of billingUsageSessions.keys()) if (!activeIds.has(id)) billingUsageSessions.delete(id);
-  for (const session of sync.sessions) billingUsageSessions.set(session.sessionId, session);
-  billingUsageIndex = { collectedAt: sync.collectedAt, sessions: sync.sessionIds.map((id) => billingUsageSessions.get(id)).filter((session): session is BillingUsageIndex["sessions"][number] => Boolean(session)) };
+  for (const id of billingUsageSessions.keys())
+    if (!activeIds.has(id)) billingUsageSessions.delete(id);
+  for (const session of sync.sessions)
+    billingUsageSessions.set(session.sessionId, session);
+  billingUsageIndex = {
+    collectedAt: sync.collectedAt,
+    sessions: sync.sessionIds
+      .map((id) => billingUsageSessions.get(id))
+      .filter((session): session is BillingUsageIndex["sessions"][number] =>
+        Boolean(session),
+      ),
+  };
   return sync.sessionIds.length - billingUsageIndex.sessions.length;
 }
 
 function refreshBillingReport(): BillingUsageReport {
-  billingUsageReport = billingUsageSummarizer.summarize(billing.get(), billingUsageIndex, new Date().toISOString(), billingCurrentTarget, billingUsageWarnings);
+  billingUsageReport = billingUsageSummarizer.summarize(
+    billing.get(),
+    billingUsageIndex,
+    new Date().toISOString(),
+    billingCurrentTarget,
+    billingUsageWarnings,
+  );
   return billingUsageReport;
 }
 
 function broadcastBillingUsage(): void {
   const report = refreshBillingReport();
-  for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send(IPC.billingUsageChanged, report);
+  for (const window of BrowserWindow.getAllWindows())
+    if (!window.isDestroyed())
+      window.webContents.send(IPC.billingUsageChanged, report);
 }
 
 function billingTarget(value: unknown): BillingModelTarget | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object") throw new Error("无效的模型价格目标");
+  if (!value || typeof value !== "object")
+    throw new Error("无效的模型价格目标");
   const target = value as Partial<BillingModelTarget>;
-  if (typeof target.provider !== "string" || typeof target.model !== "string" || !target.provider.trim() || !target.model.trim()) throw new Error("无效的模型价格目标");
-  return { provider: target.provider.trim().slice(0, 200), model: target.model.trim().slice(0, 300) };
+  if (
+    typeof target.provider !== "string" ||
+    typeof target.model !== "string" ||
+    !target.provider.trim() ||
+    !target.model.trim()
+  )
+    throw new Error("无效的模型价格目标");
+  return {
+    provider: target.provider.trim().slice(0, 200),
+    model: target.model.trim().slice(0, 300),
+  };
+}
+
+async function showUsageWindow(): Promise<void> {
+  if (usageWindow && !usageWindow.isDestroyed()) {
+    usageWindow.show();
+    usageWindow.focus();
+    return;
+  }
+  const window = createPopupWindow({
+    width: 980,
+    height: 820,
+    minWidth: 760,
+    minHeight: 640,
+    icon: appIconPath(),
+    title: `用量与费用 · ${PRODUCT_NAME}`,
+    backgroundColor: "#f7f8fa",
+  });
+  usageWindow = window;
+  window.on("closed", () => {
+    if (usageWindow === window) usageWindow = null;
+  });
+  await window.loadFile(rendererPath(path.join("workbench", "index.html")), {
+    query: { view: "billing", mode: "popup" },
+  });
 }
 
 async function showBilling(target?: BillingModelTarget): Promise<void> {
   if (target) await showLegacyBilling(target);
-  else await showWorkbench("billing");
+  else await showUsageWindow();
 }
 
 async function showLegacyBilling(target?: BillingModelTarget): Promise<void> {
   if (billingWindow && !billingWindow.isDestroyed()) {
-    billingWindow.show(); billingWindow.focus();
-    if (target) billingWindow.webContents.send(IPC.billingEditRequested, target);
+    billingWindow.show();
+    billingWindow.focus();
+    if (target)
+      billingWindow.webContents.send(IPC.billingEditRequested, target);
+    return;
+  }
+  const window = createPopupWindow({
+    width: 940,
+    height: 800,
+    minWidth: 720,
+    minHeight: 620,
+    icon: appIconPath(),
+    title: `${PRODUCT_NAME} 计费与价格规则`,
+  });
+  billingWindow = window;
+  window.on("closed", () => {
+    if (billingWindow === window) billingWindow = null;
+  });
+  await window.loadFile(rendererPath("billing.html"));
+  if (target && !billingWindow.isDestroyed())
+    billingWindow.webContents.send(IPC.billingEditRequested, target);
+}
+
+type WorkbenchView = "changes" | "vision";
+const workbenchViews = new Set<WorkbenchView>(["changes", "vision"]);
+
+async function showWorkbench(view: WorkbenchView = "changes"): Promise<void> {
+  if (workbenchWindow && !workbenchWindow.isDestroyed()) {
+    workbenchWindow.show();
+    workbenchWindow.focus();
+    workbenchWindow.webContents.send(IPC.workbenchNavigate, view);
     return;
   }
   const window = new BrowserWindow({
-    width: 940, height: 800, minWidth: 720, minHeight: 620, icon: appIconPath(), title: `${PRODUCT_NAME} 用量与费用`,
-    webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true }
+    width: 1380,
+    height: 860,
+    minWidth: 860,
+    minHeight: 600,
+    icon: appIconPath(),
+    title: `审阅与工具 · ${PRODUCT_NAME}`,
+    backgroundColor: "#f7f8fa",
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
   });
-  billingWindow = window; secureWindow(window);
-  window.on("closed", () => { if (billingWindow === window) billingWindow = null; });
-  await window.loadFile(rendererPath("billing.html"));
-  if (target && !window.isDestroyed()) window.webContents.send(IPC.billingEditRequested, target);
-}
-
-type WorkbenchView = "changes" | "billing" | "vision" | "settings";
-const workbenchViews = new Set<WorkbenchView>(["changes", "billing", "vision", "settings"]);
-
-async function showWorkbench(view: WorkbenchView = "changes", billingTargetValue?: BillingModelTarget): Promise<void> {
-  if (workbenchWindow && !workbenchWindow.isDestroyed()) {
-    workbenchWindow.show(); workbenchWindow.focus();
-    workbenchWindow.webContents.send(IPC.workbenchNavigate, view);
-    if (billingTargetValue) workbenchWindow.webContents.send(IPC.billingEditRequested, billingTargetValue);
-    return;
-  }
-  workbenchWindow = new BrowserWindow({
-    width: 1380, height: 860, minWidth: 860, minHeight: 600,
-    autoHideMenuBar: true,
-    icon: appIconPath(), title: `审阅与工具 · ${PRODUCT_NAME}`, backgroundColor: "#f7f8fa",
-    webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true }
+  workbenchWindow = window;
+  secureWindow(window);
+  workbenchWindow.setMenu(null);
+  window.on("closed", () => {
+    destroyPopupsOf(window);
+    workbenchWindow = null;
   });
-  secureWindow(workbenchWindow);
-  workbenchWindow.setMenuBarVisibility(false);
-  workbenchWindow.on("closed", () => { workbenchWindow = null; });
-  await workbenchWindow.loadFile(rendererPath(path.join("workbench", "index.html")), { query: { view } });
-  if (billingTargetValue && workbenchWindow && !workbenchWindow.isDestroyed()) workbenchWindow.webContents.send(IPC.billingEditRequested, billingTargetValue);
+  await window.loadFile(rendererPath(path.join("workbench", "index.html")), {
+    query: { view },
+  });
 }
 
 async function checkHarnessVersion(): Promise<HarnessUpdateState> {
   const currentVersion = harness.getInfo().version;
-  harnessUpdate = { ...harnessUpdate, phase: "checking", currentVersion, errorSummary: null };
+  harnessUpdate = {
+    ...harnessUpdate,
+    phase: "checking",
+    currentVersion,
+    errorSummary: null,
+  };
   broadcastInfo();
   harnessUpdate = await fetchHarnessUpdate(currentVersion);
   broadcastInfo();
@@ -435,25 +782,52 @@ async function showUpdateResult(state: UpdateState): Promise<void> {
       type: "info",
       title: "检查更新",
       message: "当前版本未配置在线更新源",
-      detail: "本地开发包不会连接更新服务器。配置 GitHub Releases 后，正式构建会在这里检查更新。",
-      buttons: ["知道了"]
+      detail:
+        "本地开发包不会连接更新服务器。配置 GitHub Releases 后，正式构建会在这里检查更新。",
+      buttons: ["知道了"],
     });
     return;
   }
   if (state.phase === "error") {
-    await dialog.showMessageBox({ type: "error", title: "检查更新失败", message: "暂时无法完成更新检查", detail: state.errorSummary ?? "请检查网络后重试。", buttons: ["知道了"] });
+    await dialog.showMessageBox({
+      type: "error",
+      title: "检查更新失败",
+      message: "暂时无法完成更新检查",
+      detail: state.errorSummary ?? "请检查网络后重试。",
+      buttons: ["知道了"],
+    });
     return;
   }
   if (state.phase === "available") {
-    const result = await dialog.showMessageBox({ type: "info", title: "发现新版本", message: `DeepSeek Harness Desktop ${state.version ?? "新版本"} 可用`, detail: "可前往设置页面下载并安装更新。", buttons: ["打开设置", "稍后"], defaultId: 0, cancelId: 1 });
+    const result = await dialog.showMessageBox({
+      type: "info",
+      title: "发现新版本",
+      message: `DeepSeek Harness Desktop ${state.version ?? "新版本"} 可用`,
+      detail: "可前往设置页面下载并安装更新。",
+      buttons: ["打开设置", "稍后"],
+      defaultId: 0,
+      cancelId: 1,
+    });
     if (result.response === 0) await showSettings();
     return;
   }
   if (state.phase === "ready") {
-    await dialog.showMessageBox({ type: "info", title: "更新已就绪", message: `${state.version ?? "新版本"} 已下载`, detail: "可在设置页面选择“重启并安装”。", buttons: ["知道了"] });
+    await dialog.showMessageBox({
+      type: "info",
+      title: "更新已就绪",
+      message: `${state.version ?? "新版本"} 已下载`,
+      detail: "可在设置页面选择“重启并安装”。",
+      buttons: ["知道了"],
+    });
     return;
   }
-  await dialog.showMessageBox({ type: "info", title: "检查更新", message: "当前已是最新版本", detail: `当前版本：${app.getVersion()}`, buttons: ["知道了"] });
+  await dialog.showMessageBox({
+    type: "info",
+    title: "检查更新",
+    message: "当前已是最新版本",
+    detail: `当前版本：${app.getVersion()}`,
+    buttons: ["知道了"],
+  });
 }
 
 async function checkUpdatesWithFeedback(): Promise<void> {
@@ -461,53 +835,87 @@ async function checkUpdatesWithFeedback(): Promise<void> {
     const state = await updates.check();
     await showUpdateResult(state);
   } catch (error) {
-    await dialog.showMessageBox({ type: "error", title: "检查更新失败", message: "更新检查发生异常", detail: error instanceof Error ? error.message : String(error), buttons: ["知道了"] });
+    await dialog.showMessageBox({
+      type: "error",
+      title: "检查更新失败",
+      message: "更新检查发生异常",
+      detail: error instanceof Error ? error.message : String(error),
+      buttons: ["知道了"],
+    });
   }
 }
 
 function installMenu(): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {
-      label: "文件",
-      submenu: [
-        { label: "新建窗口", accelerator: "CmdOrCtrl+N", click: () => void createHarnessWindow() },
-        { type: "separator" },
-        { role: "quit", label: "退出" }
-      ]
-    },
-    {
-      label: "Harness",
-      submenu: [
-        { label: "重新启动", accelerator: "CmdOrCtrl+Shift+R", click: () => void restartHarness() },
-        { label: "打开日志目录", click: () => void shell.openPath(app.getPath("logs")) }
-      ]
-    },
-    {
-      label: "应用",
-      submenu: [
-        { label: "打开工作台", accelerator: "CmdOrCtrl+Shift+E", click: () => void showWorkbench("changes") },
-        { type: "separator" },
-        { label: "设置…", accelerator: "CmdOrCtrl+,", click: () => void showSettings() },
-        { label: "用量与费用", accelerator: "CmdOrCtrl+Shift+U", click: () => void showBilling() },
-        { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
-        { type: "separator" },
-        { role: "toggleDevTools", label: "开发者工具" }
-      ]
-    },
-    {
-      label: "帮助",
-      submenu: [{
-        label: "关于",
-        click: () => void dialog.showMessageBox({
-          type: "info",
-          icon: appIconPath(),
-          title: `关于 ${PRODUCT_NAME}`,
-          message: `${PRODUCT_NAME} ${app.getVersion()}`,
-          detail: `${UNOFFICIAL_NOTICE}\n内置 DeepSeek Harness ${harness.getInfo().version}`
-        })
-      }]
-    }
-  ]));
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "文件",
+        submenu: [
+          {
+            label: "新建窗口",
+            accelerator: "CmdOrCtrl+N",
+            click: () => void createHarnessWindow(),
+          },
+          { type: "separator" },
+          { role: "quit", label: "退出" },
+        ],
+      },
+      {
+        label: "Harness",
+        submenu: [
+          {
+            label: "重新启动",
+            accelerator: "CmdOrCtrl+Shift+R",
+            click: () => void restartHarness(),
+          },
+          {
+            label: "打开日志目录",
+            click: () => void shell.openPath(app.getPath("logs")),
+          },
+        ],
+      },
+      {
+        label: "应用",
+        submenu: [
+          {
+            label: "打开工作台",
+            accelerator: "CmdOrCtrl+Shift+E",
+            click: () => void showWorkbench("changes"),
+          },
+          { type: "separator" },
+          {
+            label: "设置…",
+            accelerator: "CmdOrCtrl+,",
+            click: () => void showSettings(),
+          },
+          {
+            label: "计费与价格规则",
+            accelerator: "CmdOrCtrl+Shift+U",
+            click: () => void showBilling(),
+          },
+          { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
+          { type: "separator" },
+          { role: "toggleDevTools", label: "开发者工具" },
+        ],
+      },
+      {
+        label: "帮助",
+        submenu: [
+          {
+            label: "关于",
+            click: () =>
+              void dialog.showMessageBox({
+                type: "info",
+                icon: appIconPath(),
+                title: `关于 ${PRODUCT_NAME}`,
+                message: `${PRODUCT_NAME} ${app.getVersion()}`,
+                detail: `${UNOFFICIAL_NOTICE}\n内置 DeepSeek Harness ${harness.getInfo().version}`,
+              }),
+          },
+        ],
+      },
+    ]),
+  );
 }
 
 async function chooseWorkspace(): Promise<string | null> {
@@ -522,7 +930,7 @@ async function showDirectoryPicker(): Promise<string | null> {
   const parent = BrowserWindow.getFocusedWindow();
   const options: Electron.OpenDialogOptions = {
     title: "选择工作区目录",
-    properties: ["openDirectory", "createDirectory"]
+    properties: ["openDirectory", "createDirectory"],
   };
   const result = parent
     ? await dialog.showOpenDialog(parent, options)
@@ -534,78 +942,143 @@ async function showDirectoryPicker(): Promise<string | null> {
 async function restartHarness(): Promise<HarnessInfo> {
   const info = await harness.restart();
   const origin = `http://127.0.0.1:${info.port}`;
-  await Promise.all([...windows].filter((window) => !window.isDestroyed()).map((window) => window.loadURL(`${origin}/#desktop-session=${harness.sessionToken}`)));
+  await Promise.all(
+    [...windows]
+      .filter((window) => !window.isDestroyed())
+      .map((window) =>
+        window.loadURL(`${origin}/#desktop-session=${harness.sessionToken}`),
+      ),
+  );
   broadcastInfo();
   return info;
 }
 
 function assertTrustedIpc(event: IpcMainInvokeEvent): void {
   const sender = event.senderFrame?.url ?? "";
-  let trusted = sender.startsWith("file://") && (sender.includes("/settings.html") || sender.includes("/billing.html") || sender.includes("/splash.html") || sender.includes("/workbench/index.html"));
+  let trusted =
+    sender.startsWith("file://") &&
+    (sender.includes("/settings.html") ||
+      sender.includes("/billing.html") ||
+      sender.includes("/splash.html") ||
+      sender.includes("/workbench/index.html"));
   try {
     const url = new URL(sender);
     trusted ||= url.hostname === "127.0.0.1" && url.protocol === "http:";
-  } catch { /* 交由下方统一拒绝 */ }
+  } catch {
+    /* 交由下方统一拒绝 */
+  }
   if (!trusted) throw new Error("拒绝来自不受信任页面的 IPC 请求");
 }
 
 function registerIpc(): void {
-  const handle = <T extends unknown[]>(channel: string, action: (event: IpcMainInvokeEvent, ...args: T) => unknown) => {
-    ipcMain.handle(channel, async (event, ...args) => { assertTrustedIpc(event); return await action(event, ...(args as T)); });
+  const handle = <T extends unknown[]>(
+    channel: string,
+    action: (event: IpcMainInvokeEvent, ...args: T) => unknown,
+  ) => {
+    ipcMain.handle(channel, async (event, ...args) => {
+      assertTrustedIpc(event);
+      return await action(event, ...(args as T));
+    });
   };
   handle(IPC.getInfo, () => currentInfo());
   handle(IPC.restartHarness, () => restartHarness());
   handle(IPC.chooseWorkspace, () => chooseWorkspace());
-  handle(IPC.openLogs, async () => { await shell.openPath(app.getPath("logs")); });
+  handle(IPC.openLogs, async () => {
+    await shell.openPath(app.getPath("logs"));
+  });
   handle(IPC.openSettings, () => showSettings());
-  handle(IPC.openBilling, (_event, target?: unknown) => showBilling(billingTarget(target)));
-  handle(IPC.openLegacyBilling, (_event, target?: unknown) => showLegacyBilling(billingTarget(target)));
+  handle(IPC.openBilling, (_event, target?: unknown) =>
+    showBilling(billingTarget(target)),
+  );
+  handle(IPC.openLegacyBilling, (_event, target?: unknown) =>
+    showLegacyBilling(billingTarget(target)),
+  );
   handle(IPC.openWorkbench, (_event, value?: unknown) => {
-    const view = typeof value === "string" && workbenchViews.has(value as WorkbenchView) ? value as WorkbenchView : "changes";
+    const view =
+      typeof value === "string" && workbenchViews.has(value as WorkbenchView)
+        ? (value as WorkbenchView)
+        : "changes";
     return showWorkbench(view);
   });
   handle(IPC.checkUpdate, () => updates.check());
   handle(IPC.checkHarnessUpdate, () => checkHarnessVersion());
   handle(IPC.downloadUpdate, () => updates.download());
-  handle(IPC.finishSplashAnimation, () => { resolveSplashAnimation(); });
+  handle(IPC.finishSplashAnimation, () => {
+    resolveSplashAnimation();
+  });
   handle(IPC.retryStartup, () => retryStartup());
   handle(IPC.installUpdate, async () => {
     const userData = app.getPath("userData");
-    await createBackup(path.join(userData, "dsh"), path.join(userData, "backups"), {
-      desktopVersion: app.getVersion(), harnessVersion: harness.getInfo().version, createdAt: new Date().toISOString()
-    });
+    await createBackup(
+      path.join(userData, "dsh"),
+      path.join(userData, "backups"),
+      {
+        desktopVersion: app.getVersion(),
+        harnessVersion: harness.getInfo().version,
+        createdAt: new Date().toISOString(),
+      },
+    );
     updates.install();
   });
   handle(IPC.setUpdateChannel, async (_event, channel: UpdateChannel) => {
-    if (channel !== "stable" && channel !== "beta") throw new Error("无效的更新通道");
+    if (channel !== "stable" && channel !== "beta")
+      throw new Error("无效的更新通道");
     await settings.patch({ updateChannel: channel });
     const state = await updates.setChannel(channel);
     broadcastInfo();
     return state;
   });
-  handle(IPC.setThemePreference, async (_event, preference: ThemePreference) => {
-    if (!( ["light", "dark", "system"] as const).includes(preference)) throw new Error("无效的外观设置");
-    await themeStore.setPreference(preference);
-    syncThemeFromHarness();
-    return preference;
+  handle(
+    IPC.setThemePreference,
+    async (_event, preference: ThemePreference) => {
+      if (!(["light", "dark", "system"] as const).includes(preference))
+        throw new Error("无效的外观设置");
+      await themeStore.setPreference(preference);
+      syncThemeFromHarness();
+      return preference;
+    },
+  );
+  handle(IPC.setCredential, async (_event, name: string, value: string) => {
+    await credentials.set(name, value);
+    if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate();
   });
-  handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate(); });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
-  handle(IPC.removeCredential, async (_event, name: string) => { await credentials.remove(name); if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate(); });
+  handle(IPC.removeCredential, async (_event, name: string) => {
+    await credentials.remove(name);
+    if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate();
+  });
   handle(IPC.getDeepSeekBalance, () => deepSeekBalanceSnapshot());
   handle(IPC.refreshDeepSeekBalance, () => deepSeekBalanceSnapshot(true));
-  handle(IPC.useOfficialBilling, async (_event, targetValue: unknown, catalogProviderValue: unknown) => {
-    const target = billingTarget(targetValue);
-    if (!target || typeof catalogProviderValue !== "string") throw new Error("无效的官方价格目标");
-    const current = billing.get();
-    const catalogProvider = catalogProviderValue.trim();
-    if (!current.catalog.rules.some((rule) => rule.provider.toLowerCase() === catalogProvider.toLowerCase() && rule.model.toLowerCase() === target.model.toLowerCase())) throw new Error("官方价格清单中没有这个模型");
-    const providerBindings = current.providerBindings.filter((binding) => binding.provider.toLowerCase() !== target.provider.toLowerCase());
-    if (target.provider.toLowerCase() !== catalogProvider.toLowerCase()) providerBindings.push({ provider: target.provider, catalogProvider });
-    const saved = await billing.saveUserSettings({ ...restoreOfficialBilling(current, target.provider, target.model), providerBindings });
-    broadcastBilling();
-    return billingSettingsSnapshot(saved);
-  });
+  handle(
+    IPC.useOfficialBilling,
+    async (_event, targetValue: unknown, catalogProviderValue: unknown) => {
+      const target = billingTarget(targetValue);
+      if (!target || typeof catalogProviderValue !== "string")
+        throw new Error("无效的官方价格目标");
+      const current = billing.get();
+      const catalogProvider = catalogProviderValue.trim();
+      if (
+        !current.catalog.rules.some(
+          (rule) =>
+            rule.provider.toLowerCase() === catalogProvider.toLowerCase() &&
+            rule.model.toLowerCase() === target.model.toLowerCase(),
+        )
+      )
+        throw new Error("官方价格清单中没有这个模型");
+      const providerBindings = current.providerBindings.filter(
+        (binding) =>
+          binding.provider.toLowerCase() !== target.provider.toLowerCase(),
+      );
+      if (target.provider.toLowerCase() !== catalogProvider.toLowerCase())
+        providerBindings.push({ provider: target.provider, catalogProvider });
+      const saved = await billing.saveUserSettings({
+        ...restoreOfficialBilling(current, target.provider, target.model),
+        providerBindings,
+      });
+      broadcastBilling();
+      return billingSettingsSnapshot(saved);
+    },
+  );
   handle(IPC.getBillingSettings, () => billingSettingsSnapshot(billing.get()));
   handle(IPC.setBillingSettings, async (_event, value: BillingSettings) => {
     const saved = await billing.saveUserSettings(value);
@@ -618,63 +1091,164 @@ function registerIpc(): void {
     return { ...result, settings: billingSettingsSnapshot(result.settings) };
   });
   handle(IPC.getBillingUsage, () => refreshBillingReport());
-  handle(IPC.reportBillingUsage, (_event, value: unknown, targetValue?: unknown) => {
-    const normalized = normalizeBillingUsageSync(value);
-    const missingSessions = applyBillingUsageSync(normalized.sync);
-    billingUsageWarnings = missingSessions ? [...normalized.warnings, `有 ${missingSessions} 个对话尚未完成增量同步，将在下次更新后计入。`] : normalized.warnings;
-    billingCurrentTarget = billingTarget(targetValue);
-    broadcastBillingUsage();
-    return billingUsageReport;
-  });
+  handle(
+    IPC.reportBillingUsage,
+    (_event, value: unknown, targetValue?: unknown) => {
+      const normalized = normalizeBillingUsageSync(value);
+      const missingSessions = applyBillingUsageSync(normalized.sync);
+      billingUsageWarnings = missingSessions
+        ? [
+            ...normalized.warnings,
+            `有 ${missingSessions} 个对话尚未完成增量同步，将在下次更新后计入。`,
+          ]
+        : normalized.warnings;
+      billingCurrentTarget = billingTarget(targetValue);
+      broadcastBillingUsage();
+      return billingUsageReport;
+    },
+  );
   const checkedText = (value: unknown, label: string, max = 500): string => {
-    if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${label}无效`);
+    if (typeof value !== "string" || !value.trim() || value.length > max)
+      throw new Error(`${label}无效`);
     return value.trim();
   };
   const broadcastChangeBatches = async () => {
     const batches = await changeSets.list();
-    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send(IPC.changeBatchesChanged, batches);
+    for (const window of BrowserWindow.getAllWindows())
+      if (!window.isDestroyed())
+        window.webContents.send(IPC.changeBatchesChanged, batches);
     return batches;
   };
-  handle(IPC.setActiveWorkspaceContext, async (event, sessionValue: unknown, workspaceValue: unknown) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!senderWindow || !windows.has(senderWindow)) throw new Error("只能由 Harness 会话更新工作区上下文");
-    const sessionId = checkedText(sessionValue, "会话 ID", 200);
-    if (workspaceValue === null) {
-      workspaceContexts.delete(senderWindow.id);
-      if (activeWorkspaceContext?.windowId === senderWindow.id) activeWorkspaceContext = null;
-    } else {
-      const workspace = path.resolve(checkedText(workspaceValue, "工作区", 2_000));
-      const context = { sessionId, path: workspace, windowId: senderWindow.id };
-      workspaceContexts.set(senderWindow.id, context);
-      if (senderWindow.isFocused() || activeWorkspaceContext?.windowId === senderWindow.id || !activeWorkspaceContext) activeWorkspaceContext = context;
-    }
-    broadcastInfo();
-  });
+  handle(
+    IPC.setActiveWorkspaceContext,
+    async (event, sessionValue: unknown, workspaceValue: unknown) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow || !windows.has(senderWindow))
+        throw new Error("只能由 Harness 会话更新工作区上下文");
+      const sessionId = checkedText(sessionValue, "会话 ID", 200);
+      if (workspaceValue === null) {
+        workspaceContexts.delete(senderWindow.id);
+        if (activeWorkspaceContext?.windowId === senderWindow.id)
+          activeWorkspaceContext = null;
+      } else {
+        const workspace = path.resolve(
+          checkedText(workspaceValue, "工作区", 2_000),
+        );
+        const context = {
+          sessionId,
+          path: workspace,
+          windowId: senderWindow.id,
+        };
+        workspaceContexts.set(senderWindow.id, context);
+        if (
+          senderWindow.isFocused() ||
+          activeWorkspaceContext?.windowId === senderWindow.id ||
+          !activeWorkspaceContext
+        )
+          activeWorkspaceContext = context;
+      }
+      broadcastInfo();
+    },
+  );
   handle(IPC.createChangeBatch, async (_event, titleValue: unknown) => {
     const workspace = activeWorkspaceContext?.path;
     if (!workspace) throw new Error("请先在 Harness 中打开一个带工作区的对话");
-    const batch = await changeSets.create(checkedText(titleValue, "任务标题", 240), workspace);
-    await broadcastChangeBatches(); return batch;
+    const batch = await changeSets.create(
+      checkedText(titleValue, "任务标题", 240),
+      workspace,
+    );
+    await broadcastChangeBatches();
+    return batch;
   });
-  handle(IPC.closeChangeBatch, async (_event, idValue: unknown) => { const batch = await changeSets.close(checkedText(idValue, "批次 ID", 120)); await broadcastChangeBatches(); return batch; });
+  handle(IPC.closeChangeBatch, async (_event, idValue: unknown) => {
+    const batch = await changeSets.close(checkedText(idValue, "批次 ID", 120));
+    await broadcastChangeBatches();
+    return batch;
+  });
   handle(IPC.listChangeBatches, () => changeSets.list());
-  handle(IPC.getFileDiff, (_event, idValue: unknown, fileValue: unknown) => changeSets.diff(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000)));
-  handle(IPC.markChangeReviewed, async (_event, idValue: unknown, fileValue: unknown, hunkValue?: unknown) => {
-    const value = await changeSets.markReviewed(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000), hunkValue === undefined ? undefined : checkedText(hunkValue, "代码块 ID", 120));
-    await broadcastChangeBatches(); return value;
-  });
-  handle(IPC.revertChangeFile, async (_event, idValue: unknown, fileValue: unknown) => { const value = await changeSets.revertFile(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000)); await broadcastChangeBatches(); return value; });
-  handle(IPC.revertChangeHunk, async (_event, idValue: unknown, fileValue: unknown, hunkValue: unknown) => { const value = await changeSets.revertHunk(checkedText(idValue, "批次 ID", 120), checkedText(fileValue, "文件路径", 2_000), checkedText(hunkValue, "代码块 ID", 120)); await broadcastChangeBatches(); return value; });
+  handle(IPC.getFileDiff, (_event, idValue: unknown, fileValue: unknown) =>
+    changeSets.diff(
+      checkedText(idValue, "批次 ID", 120),
+      checkedText(fileValue, "文件路径", 2_000),
+    ),
+  );
+  handle(
+    IPC.markChangeReviewed,
+    async (
+      _event,
+      idValue: unknown,
+      fileValue: unknown,
+      hunkValue?: unknown,
+    ) => {
+      const value = await changeSets.markReviewed(
+        checkedText(idValue, "批次 ID", 120),
+        checkedText(fileValue, "文件路径", 2_000),
+        hunkValue === undefined
+          ? undefined
+          : checkedText(hunkValue, "代码块 ID", 120),
+      );
+      await broadcastChangeBatches();
+      return value;
+    },
+  );
+  handle(
+    IPC.revertChangeFile,
+    async (_event, idValue: unknown, fileValue: unknown) => {
+      const value = await changeSets.revertFile(
+        checkedText(idValue, "批次 ID", 120),
+        checkedText(fileValue, "文件路径", 2_000),
+      );
+      await broadcastChangeBatches();
+      return value;
+    },
+  );
+  handle(
+    IPC.revertChangeHunk,
+    async (
+      _event,
+      idValue: unknown,
+      fileValue: unknown,
+      hunkValue: unknown,
+    ) => {
+      const value = await changeSets.revertHunk(
+        checkedText(idValue, "批次 ID", 120),
+        checkedText(fileValue, "文件路径", 2_000),
+        checkedText(hunkValue, "代码块 ID", 120),
+      );
+      await broadcastChangeBatches();
+      return value;
+    },
+  );
   handle(IPC.getVisionSettings, () => vision.getSettings());
-  handle(IPC.setVisionSettings, (_event, value: unknown) => vision.setSettings(value as never));
-  handle(IPC.discoverVisionTools, (_event, value: unknown) => vision.discoverTools(value as never));
-  handle(IPC.testVisionBackend, (_event, value: unknown) => vision.testBackend(value as never));
-  handle(IPC.analyzeVision, (_event, value: unknown) => vision.analyze(value as never));
-  handle(IPC.cancelVision, (_event, requestId: unknown) => { vision.cancel(checkedText(requestId, "请求 ID", 120)); });
-  handle(IPC.getCachedVision, (_event, value: unknown) => vision.cached(value as never));
-  handle(IPC.listVisionAttachments, (_event, value?: unknown) => vision.listAttachments(value === undefined ? undefined : checkedText(value, "会话 ID", 240)));
+  handle(IPC.setVisionSettings, (_event, value: unknown) =>
+    vision.setSettings(value as never),
+  );
+  handle(IPC.discoverVisionTools, (_event, value: unknown) =>
+    vision.discoverTools(value as never),
+  );
+  handle(IPC.testVisionBackend, (_event, value: unknown) =>
+    vision.testBackend(value as never),
+  );
+  handle(IPC.analyzeVision, (_event, value: unknown) =>
+    vision.analyze(value as never),
+  );
+  handle(IPC.cancelVision, (_event, requestId: unknown) => {
+    vision.cancel(checkedText(requestId, "请求 ID", 120));
+  });
+  handle(IPC.getCachedVision, (_event, value: unknown) =>
+    vision.cached(value as never),
+  );
+  handle(IPC.listVisionAttachments, (_event, value?: unknown) =>
+    vision.listAttachments(
+      value === undefined ? undefined : checkedText(value, "会话 ID", 240),
+    ),
+  );
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
-    try { assertTrustedIpc(event); } catch { return; }
+    try {
+      assertTrustedIpc(event);
+    } catch {
+      return;
+    }
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || !windows.has(window)) return;
     integrationReadyWindows.add(window);
@@ -684,8 +1258,18 @@ function registerIpc(): void {
     sendPendingWorkspaceOpens(window);
   });
   ipcMain.on(IPC.openWorkspaceResult, (event, result: OpenWorkspaceResult) => {
-    try { assertTrustedIpc(event); } catch { return; }
-    if (!result || typeof result.requestId !== "string" || typeof result.path !== "string" || typeof result.ok !== "boolean") return;
+    try {
+      assertTrustedIpc(event);
+    } catch {
+      return;
+    }
+    if (
+      !result ||
+      typeof result.requestId !== "string" ||
+      typeof result.path !== "string" ||
+      typeof result.ok !== "boolean"
+    )
+      return;
     const request = pendingWorkspaceOpens.get(result.requestId);
     if (!request || request.path !== result.path) return;
     pendingWorkspaceOpens.delete(result.requestId);
@@ -695,15 +1279,19 @@ function registerIpc(): void {
       focusHarnessWindow(window);
       return;
     }
-    log.error(`[desktop] failed to open workspace from shell: ${result.path}: ${result.error ?? "unknown error"}`);
+    log.error(
+      `[desktop] failed to open workspace from shell: ${result.path}: ${result.error ?? "unknown error"}`,
+    );
     const options: Electron.MessageBoxOptions = {
       type: "error",
       title: "无法打开工作区",
       message: "拖入的文件夹未能在 Harness 中打开",
       detail: `${result.path}\n\n${result.error ?? "未知错误"}`,
-      buttons: ["知道了"]
+      buttons: ["知道了"],
     };
-    void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+    void (window
+      ? dialog.showMessageBox(window, options)
+      : dialog.showMessageBox(options));
   });
 }
 
@@ -717,7 +1305,7 @@ async function handleHarnessFailure(): Promise<void> {
     message: harness.getInfo().errorSummary ?? "Harness 意外停止",
     buttons: ["重新启动", "打开日志", "退出"],
     defaultId: 0,
-    cancelId: 2
+    cancelId: 2,
   });
   if (result.response === 0) await restartHarness();
   else if (result.response === 1) await shell.openPath(app.getPath("logs"));
@@ -726,7 +1314,11 @@ async function handleHarnessFailure(): Promise<void> {
 
 app.on("second-instance", (_event, commandLine, workingDirectory) => {
   void queueLaunchDirectories(commandLine, workingDirectory);
-  if (splashWindow && !splashWindow.isDestroyed()) { splashWindow.show(); splashWindow.focus(); return; }
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.show();
+    splashWindow.focus();
+    return;
+  }
   const window = [...windows][0];
   if (window) focusHarnessWindow(window);
   else if (harness) void createHarnessWindow();
@@ -734,7 +1326,11 @@ app.on("second-instance", (_event, commandLine, workingDirectory) => {
 
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  if (app.isReady()) void queueLaunchDirectories(launchArgumentsForPath(filePath), process.cwd());
+  if (app.isReady())
+    void queueLaunchDirectories(
+      launchArgumentsForPath(filePath),
+      process.cwd(),
+    );
   else earlyOpenPaths.push(filePath);
 });
 
@@ -743,11 +1339,18 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   if (themeStore) unwatchFile(themeStore.filePath);
-  void harness.stop().then(() => directoryPickerBridge?.stop()).finally(() => app.quit());
+  void harness
+    .stop()
+    .then(() => directoryPickerBridge?.stop())
+    .finally(() => app.quit());
 });
 
-app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("activate", () => { if (windows.size === 0 && !splashWindow) void createHarnessWindow(); });
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+app.on("activate", () => {
+  if (windows.size === 0 && !splashWindow) void createHarnessWindow();
+});
 
 void app.whenReady().then(async () => {
   log.initialize();
@@ -756,23 +1359,39 @@ void app.whenReady().then(async () => {
   const userData = app.getPath("userData");
   themeStore = new HarnessThemeStore(path.join(userData, "dsh"));
   syncThemeFromHarness(false);
-  watchFile(themeStore.filePath, { interval: 500, persistent: false }, () => syncThemeFromHarness());
+  watchFile(themeStore.filePath, { interval: 500, persistent: false }, () =>
+    syncThemeFromHarness(),
+  );
   settings = new SettingsStore(userData);
   await settings.load();
   billing = new BillingStore(settings, app.getAppPath());
   await billing.load();
-  billingUsageReport = billingUsageSummarizer.summarize(billing.get(), billingUsageIndex, new Date().toISOString());
+  billingUsageReport = billingUsageSummarizer.summarize(
+    billing.get(),
+    billingUsageIndex,
+    new Date().toISOString(),
+  );
   credentials = new CredentialStore(userData);
   changeSets = new ChangeSetService(userData);
   vision = new VisionService(settings, credentials, userData);
-  deepSeekBalance = new DeepSeekBalanceService({ credential: async () => await credentials.get("DEEPSEEK_API_KEY") ?? await readHarnessCredential(path.join(userData, "dsh"), "DEEPSEEK_API_KEY") });
-  updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
+  deepSeekBalance = new DeepSeekBalanceService({
+    credential: async () =>
+      (await credentials.get("DEEPSEEK_API_KEY")) ??
+      (await readHarnessCredential(
+        path.join(userData, "dsh"),
+        "DEEPSEEK_API_KEY",
+      )),
+  });
+  updates = new UpdateManager(
+    settings.get().updateChannel,
+    settings.get().updateRepository,
+  );
   directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);
   const bridgeInfo = await directoryPickerBridge.start();
   const desktopOverlayPath = await writeDesktopOverlay(
     path.join(userData, "desktop-runtime"),
     directoryPickerPluginPath(),
-    billingPluginPath()
+    billingPluginPath(),
   );
   harness = new HarnessManager({
     dshHome: path.join(userData, "dsh"),
@@ -780,7 +1399,7 @@ void app.whenReady().then(async () => {
     credentials: () => credentials.environment(),
     log: (message) => log.info(message),
     desktopOverlayPath,
-    directoryPickerBridge: bridgeInfo
+    directoryPickerBridge: bridgeInfo,
   });
   harness.on("changed", (info) => {
     broadcastInfo();
@@ -788,43 +1407,73 @@ void app.whenReady().then(async () => {
   });
   updates.on("changed", broadcastInfo);
   registerIpc();
-  if (billing.shouldAutoCheck()) void billing.checkForUpdates().then(broadcastBilling).catch((error) => log.warn("价格清单自动检查失败", error));
+  if (billing.shouldAutoCheck())
+    void billing
+      .checkForUpdates()
+      .then(broadcastBilling)
+      .catch((error) => log.warn("价格清单自动检查失败", error));
   installMenu();
   await queueLaunchDirectories(process.argv, process.cwd());
   for (const filePath of earlyOpenPaths.splice(0)) {
-    await queueLaunchDirectories(launchArgumentsForPath(filePath), process.cwd());
+    await queueLaunchDirectories(
+      launchArgumentsForPath(filePath),
+      process.cwd(),
+    );
   }
   try {
     if (process.env.DSH_DESKTOP_SMOKE_TEST === "1") {
       const started = await harness.start();
-      const root = await fetch(`http://127.0.0.1:${started.port}/`).then((response) => response.text());
+      const root = await fetch(`http://127.0.0.1:${started.port}/`).then(
+        (response) => response.text(),
+      );
       if (!root.includes("deepseek-harness-desktop-integration")) {
         throw new Error("桌面集成客户端未写入 Harness 启动清单");
       }
       const bootScripts = [...root.matchAll(/<script>([\s\S]*?)<\/script>/g)]
         .map((match) => match[1])
-        .filter((source): source is string => typeof source === "string"
-          && (source.includes("window.__DSH_BOOT__ =") || source.includes("deepseek-harness-desktop-integration")));
-      const smokeWindow: { __DSH_BOOT__?: { entries: Array<{ id: string }> } } = {};
+        .filter(
+          (source): source is string =>
+            typeof source === "string" &&
+            (source.includes("window.__DSH_BOOT__ =") ||
+              source.includes("deepseek-harness-desktop-integration")),
+        );
+      const smokeWindow: { __DSH_BOOT__?: { entries: Array<{ id: string }> } } =
+        {};
       for (const source of bootScripts) Function("window", source)(smokeWindow);
-      if (!smokeWindow.__DSH_BOOT__?.entries.some((entry) => entry.id === "deepseek-harness-desktop-integration")) {
+      if (
+        !smokeWindow.__DSH_BOOT__?.entries.some(
+          (entry) => entry.id === "deepseek-harness-desktop-integration",
+        )
+      ) {
         throw new Error("桌面集成客户端未能加入 Harness 启动图");
       }
-      const clientSource = await fetch(`http://127.0.0.1:${started.port}/desktop-integration/client.js`).then((response) => response.text());
+      const clientSource = await fetch(
+        `http://127.0.0.1:${started.port}/desktop-integration/client.js`,
+      ).then((response) => response.text());
       if (!clientSource.includes("desktop:open-workspace")) {
         throw new Error("桌面集成客户端路由不可用");
       }
-      if (!clientSource.includes("conversation.session.header.utilities") || !clientSource.includes("openBilling")) {
+      if (
+        !clientSource.includes("conversation.session.header.utilities") ||
+        !clientSource.includes("openBilling")
+      ) {
         throw new Error("右上角用量与费用入口不可用");
       }
       let clientExports: { inject?: unknown } | undefined;
       const moduleWindow = {
         __ModuleLoader__: {
-          load: (handoff: { factory: (require: (id: string) => unknown) => { inject?: unknown } }) => { clientExports = handoff.factory(() => ({})); }
-        }
+          load: (handoff: {
+            factory: (require: (id: string) => unknown) => { inject?: unknown };
+          }) => {
+            clientExports = handoff.factory(() => ({}));
+          },
+        },
       };
       Function("window", clientSource)(moduleWindow);
-      if (JSON.stringify(clientExports?.inject) !== JSON.stringify(["workspaces", "sessions", "slots", "modelDirectories"])) {
+      if (
+        JSON.stringify(clientExports?.inject) !==
+        JSON.stringify(["workspaces", "sessions", "slots", "modelDirectories"])
+      ) {
         throw new Error("桌面集成客户端未声明 Harness 服务依赖");
       }
       // Parse the browser bundle without executing it in Node.

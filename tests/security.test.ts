@@ -1,14 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { isSafeExternalUrl, redactSensitive, sanitizedEnvironment } from "../src/shared/security.js";
+import {
+  isSafeExternalUrl,
+  redactSensitive,
+  sanitizedEnvironment,
+} from "../src/shared/security.js";
 
 describe("security helpers", () => {
   it("redacts common credential forms", () => {
-    expect(redactSensitive("Authorization: Bearer abc.def.ghi")).toContain("Bearer [REDACTED]");
+    expect(redactSensitive("Authorization: Bearer abc.def.ghi")).toContain(
+      "Bearer [REDACTED]",
+    );
     expect(redactSensitive("api_key=super-secret")).toBe("api_key=[REDACTED]");
   });
 
   it("removes sensitive environment entries", () => {
-    expect(sanitizedEnvironment({ PATH: "ok", DEEPSEEK_API_KEY: "no", SESSION_TOKEN: "no" })).toEqual({ PATH: "ok" });
+    expect(
+      sanitizedEnvironment({
+        PATH: "ok",
+        DEEPSEEK_API_KEY: "no",
+        SESSION_TOKEN: "no",
+      }),
+    ).toEqual({ PATH: "ok" });
   });
 
   it("only permits safe external protocols", () => {

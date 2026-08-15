@@ -42,9 +42,14 @@ export class DirectoryPickerBridge {
         response.end(JSON.stringify({ path: selectedPath }));
       } catch (error) {
         response.statusCode = 500;
-        response.end(JSON.stringify({
-          error: error instanceof Error ? error.message : "directory picker failed"
-        }));
+        response.end(
+          JSON.stringify({
+            error:
+              error instanceof Error
+                ? error.message
+                : "directory picker failed",
+          }),
+        );
       }
     });
     server.on("clientError", (_error, socket) => socket.destroy());

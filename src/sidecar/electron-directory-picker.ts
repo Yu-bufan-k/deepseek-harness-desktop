@@ -293,7 +293,7 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
             setBusy(true); desktopNotify("正在使用 " + (configuration.backends.find((item) => item.id === selectedBackendId)?.name || "视觉服务") + " 解析图片…", "loading", true);
             try {
               const result = await window.desktop.analyzeVision({ requestId: crypto.randomUUID(), sessionId, backendId: selectedBackendId, question, imageDataUrl: String(reader.result), mimeType: file.type || "image/png" });
-              const context = "<desktop_vision_context backend=\\\"" + result.backendName.replaceAll("\\\"", "'") + "\\\" model=\\\"" + result.model.replaceAll("\\\"", "'") + "\\\" image_sha256=\\\"" + result.imageHash + "\\\">\\n" + result.text + "\\n</desktop_vision_context>";
+              const context = "<desktop_vision_context backend=\\"" + result.backendName.replaceAll("\\"", "'") + "\\" model=\\"" + result.model.replaceAll("\\"", "'") + "\\" image_sha256=\\"" + result.imageHash + "\\">\\n" + result.text + "\\n</desktop_vision_context>";
               if (!setComposerText(composer, question + "\\n\\n" + context)) throw new Error("没有找到消息输入框");
               desktopNotify("图片已解析并写入消息，确认内容后再发送", "success");
             } catch (error) { desktopNotify(error instanceof Error ? error.message : String(error), "error", true); }
@@ -376,11 +376,13 @@ function injectDesktopClient(html: string): string {
     url: CLIENT_PLUGIN_PATH,
     rev: "3",
     inject: ["workspaces", "sessions", "slots", "modelDirectories"],
-    immediately: true
+    immediately: true,
   });
-  const script = `<script>(function(w){function add(g){if(g&&Array.isArray(g.entries)&&!g.entries.some(function(e){return e.id===${JSON.stringify(CLIENT_PLUGIN_ID)}})){g.entries.push(${row});}}if(w.__DSH_BOOT__){add(w.__DSH_BOOT__);return;}Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,set:function(g){add(g);Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,writable:true,value:g});}});})(window);<\/script>`;
+  const script = `<script>(function(w){function add(g){if(g&&Array.isArray(g.entries)&&!g.entries.some(function(e){return e.id===${JSON.stringify(CLIENT_PLUGIN_ID)}})){g.entries.push(${row});}}if(w.__DSH_BOOT__){add(w.__DSH_BOOT__);return;}Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,set:function(g){add(g);Object.defineProperty(w,"__DSH_BOOT__",{configurable:true,writable:true,value:g});}});})(window);</script>`;
   const head = html.indexOf("<head>");
-  return head === -1 ? `${script}${html}` : `${html.slice(0, head + 6)}${script}${html.slice(head + 6)}`;
+  return head === -1
+    ? `${script}${html}`
+    : `${html.slice(0, head + 6)}${script}${html.slice(head + 6)}`;
 }
 
 interface BridgeResponse {
@@ -391,22 +393,33 @@ interface BridgeResponse {
 function bridgeConfiguration(): { port: number; token: string } {
   const port = Number(process.env.DSH_DESKTOP_BRIDGE_PORT);
   const token = process.env.DSH_DESKTOP_BRIDGE_TOKEN ?? "";
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || token.length < 32) {
+  if (
+    !Number.isSafeInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    token.length < 32
+  ) {
     throw new Error("desktop directory picker bridge is not configured");
   }
   return { port, token };
 }
 
-export async function pickDirectoryThroughElectron(signal: AbortSignal): Promise<string | null> {
+export async function pickDirectoryThroughElectron(
+  signal: AbortSignal,
+): Promise<string | null> {
   const { port, token } = bridgeConfiguration();
   const response = await fetch(`http://127.0.0.1:${port}/pick-directory`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
-    signal
+    signal,
   });
-  const body = await response.json() as BridgeResponse;
+  const body = (await response.json()) as BridgeResponse;
   if (!response.ok) {
-    throw new Error(typeof body.error === "string" ? body.error : `desktop directory picker failed (${response.status})`);
+    throw new Error(
+      typeof body.error === "string"
+        ? body.error
+        : `desktop directory picker failed (${response.status})`,
+    );
   }
   if (body.path === null) return null;
   if (typeof body.path !== "string" || body.path.length === 0) {
@@ -415,28 +428,55 @@ export async function pickDirectoryThroughElectron(signal: AbortSignal): Promise
   return body.path;
 }
 
+/**
+ * webServer 是宿主在运行时注入的服务，应用侧没有它的类型声明。这里按使用面
+ * 声明最小接口，避免退化成 any。register/tapIndex 返回的 disposer 正好是
+ * `ctx.effect()` 期望的 effect body 返回值。
+ */
+interface DesktopWebServer {
+  register(options: {
+    kind: "exact";
+    path: string;
+    handler: (
+      request: unknown,
+      response: import("node:http").ServerResponse,
+    ) => void;
+  }): () => void;
+  tapIndex(callback: (html: string) => string): () => void;
+}
+
 export default class ElectronDirectoryPicker extends DirectoryPicker {
-  constructor(ctx: any) {
+  constructor(ctx: ConstructorParameters<typeof DirectoryPicker>[0]) {
     super(ctx);
-    ctx.inject(["webServer"], (httpCtx: any) => {
-      httpCtx.effect(() => httpCtx.webServer.register({
-        kind: "exact",
-        path: CLIENT_PLUGIN_PATH,
-        handler: (_request: unknown, response: any) => {
-          response.writeHead(200, {
-            "content-type": "text/javascript; charset=utf-8",
-            "cache-control": "no-store"
-          });
-          response.end(CLIENT_PLUGIN_SOURCE);
-        }
-      }), "desktop integration client route");
-      httpCtx.effect(() => httpCtx.webServer.tapIndex(injectDesktopClient), "desktop integration client bootstrap");
+    ctx.inject(["webServer"], (httpCtx) => {
+      // 只有宿主根上下文挂载了 webServer，这里按使用面收窄类型。
+      const webServer = (httpCtx as unknown as { webServer: DesktopWebServer })
+        .webServer;
+      httpCtx.effect(
+        () =>
+          webServer.register({
+            kind: "exact",
+            path: CLIENT_PLUGIN_PATH,
+            handler: (_request, response) => {
+              response.writeHead(200, {
+                "content-type": "text/javascript; charset=utf-8",
+                "cache-control": "no-store",
+              });
+              response.end(CLIENT_PLUGIN_SOURCE);
+            },
+          }),
+        "desktop integration client route",
+      );
+      httpCtx.effect(
+        () => webServer.tapIndex(injectDesktopClient),
+        "desktop integration client bootstrap",
+      );
     });
   }
 
   private readonly nativeCapability = {
     kind: "native" as const,
-    pick: (signal: AbortSignal) => pickDirectoryThroughElectron(signal)
+    pick: (signal: AbortSignal) => pickDirectoryThroughElectron(signal),
   };
 
   capability(): typeof this.nativeCapability {

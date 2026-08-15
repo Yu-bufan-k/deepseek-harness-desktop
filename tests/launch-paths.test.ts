@@ -7,7 +7,11 @@ import { resolveLaunchDirectories } from "../src/main/launch-paths.js";
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("resolveLaunchDirectories", () => {
@@ -18,12 +22,18 @@ describe("resolveLaunchDirectories", () => {
     await mkdir(workspace);
     await writeFile(path.join(root, "readme.txt"), "test");
 
-    await expect(resolveLaunchDirectories([
-      "DeepSeek Harness Desktop.exe",
-      workspace,
-      "--ignored",
-      path.join(root, "readme.txt")
-    ], root, true)).resolves.toEqual([await realpath(workspace)]);
+    await expect(
+      resolveLaunchDirectories(
+        [
+          "DeepSeek Harness Desktop.exe",
+          workspace,
+          "--ignored",
+          path.join(root, "readme.txt"),
+        ],
+        root,
+        true,
+      ),
+    ).resolves.toEqual([await realpath(workspace)]);
   });
 
   it("开发模式跳过 Electron 与应用入口并去除重复目录", async () => {
@@ -32,8 +42,12 @@ describe("resolveLaunchDirectories", () => {
     const workspace = path.join(root, "workspace");
     await mkdir(workspace);
 
-    await expect(resolveLaunchDirectories([
-      "electron.exe", ".", workspace, workspace
-    ], root, false)).resolves.toEqual([await realpath(workspace)]);
+    await expect(
+      resolveLaunchDirectories(
+        ["electron.exe", ".", workspace, workspace],
+        root,
+        false,
+      ),
+    ).resolves.toEqual([await realpath(workspace)]);
   });
 });

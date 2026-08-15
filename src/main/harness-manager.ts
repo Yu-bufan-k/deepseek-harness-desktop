@@ -25,34 +25,53 @@ export class HarnessManager extends EventEmitter {
   private child: ChildProcess | null = null;
   private readonly intentionalStops = new WeakSet<ChildProcess>();
   private info: HarnessInfo = {
-    status: "stopped", version: DSH_VERSION, port: null, pid: null,
-    startedAt: null, errorSummary: null
+    status: "stopped",
+    version: DSH_VERSION,
+    port: null,
+    pid: null,
+    startedAt: null,
+    errorSummary: null,
   };
   readonly sessionToken = randomBytes(32).toString("hex");
 
-  constructor(private readonly options: HarnessManagerOptions) { super(); }
+  constructor(private readonly options: HarnessManagerOptions) {
+    super();
+  }
 
-  getInfo(): HarnessInfo { return structuredClone(this.info); }
+  getInfo(): HarnessInfo {
+    return structuredClone(this.info);
+  }
 
-  private setStatus(status: HarnessStatus, patch: Partial<HarnessInfo> = {}): void {
+  private setStatus(
+    status: HarnessStatus,
+    patch: Partial<HarnessInfo> = {},
+  ): void {
     this.info = { ...this.info, ...patch, status };
     this.emit("changed", this.getInfo());
   }
 
   private dshEntry(): string {
-    const resolvedPackageJson = require.resolve("@deepseek-ai/dsh/package.json");
+    const resolvedPackageJson =
+      require.resolve("@deepseek-ai/dsh/package.json");
     const unpackedPackageJson = resolvedPackageJson.replace(
       /([\\/])app\.asar\1/,
       `$1app.asar.unpacked$1`,
     );
-    const packageJson = fs.existsSync(unpackedPackageJson) ? unpackedPackageJson : resolvedPackageJson;
+    const packageJson = fs.existsSync(unpackedPackageJson)
+      ? unpackedPackageJson
+      : resolvedPackageJson;
     return path.join(path.dirname(packageJson), "lib", "bin.js");
   }
 
   async start(): Promise<HarnessInfo> {
     if (this.child && this.child.exitCode === null) return this.getInfo();
     const port = await findAvailablePort();
-    this.setStatus("starting", { port, pid: null, startedAt: new Date().toISOString(), errorSummary: null });
+    this.setStatus("starting", {
+      port,
+      pid: null,
+      startedAt: new Date().toISOString(),
+      errorSummary: null,
+    });
     const workspace = this.options.workspace() ?? process.cwd();
     fs.mkdirSync(this.options.dshHome, { recursive: true });
     const secrets = await this.options.credentials();
@@ -63,23 +82,38 @@ export class HarnessManager extends EventEmitter {
       DSH_DESKTOP_SESSION_TOKEN: this.sessionToken,
       DSH_DESKTOP_BRIDGE_PORT: String(this.options.directoryPickerBridge.port),
       DSH_DESKTOP_BRIDGE_TOKEN: this.options.directoryPickerBridge.token,
-      ELECTRON_RUN_AS_NODE: "1"
+      ELECTRON_RUN_AS_NODE: "1",
     };
 
-    const child = spawn(process.execPath, [
-      "--expose-internals", this.dshEntry(), "web", "--patch", this.options.desktopOverlayPath,
-      "--host", "127.0.0.1", "--port", String(port)
-    ], {
-      cwd: workspace,
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      windowsHide: true
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        "--expose-internals",
+        this.dshEntry(),
+        "web",
+        "--patch",
+        this.options.desktopOverlayPath,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(port),
+      ],
+      {
+        cwd: workspace,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        windowsHide: true,
+      },
+    );
     this.child = child;
     this.setStatus("starting", { pid: child.pid ?? null });
-    child.stdout?.on("data", (chunk) => this.options.log(`[dsh] ${redactSensitive(String(chunk)).trimEnd()}`));
-    child.stderr?.on("data", (chunk) => this.options.log(`[dsh:err] ${redactSensitive(String(chunk)).trimEnd()}`));
+    child.stdout?.on("data", (chunk) =>
+      this.options.log(`[dsh] ${redactSensitive(String(chunk)).trimEnd()}`),
+    );
+    child.stderr?.on("data", (chunk) =>
+      this.options.log(`[dsh:err] ${redactSensitive(String(chunk)).trimEnd()}`),
+    );
     child.once("exit", (code, signal) => {
       const intentional = this.intentionalStops.has(child);
       this.intentionalStops.delete(child);
@@ -88,28 +122,43 @@ export class HarnessManager extends EventEmitter {
       if (this.child !== child) return;
       this.child = null;
       if (intentional) this.setStatus("stopped", { pid: null, port: null });
-      else this.setStatus("failed", {
-        pid: null,
-        errorSummary: `Harness exited unexpectedly (code ${String(code)}, signal ${String(signal)})`
-      });
+      else
+        this.setStatus("failed", {
+          pid: null,
+          errorSummary: `Harness exited unexpectedly (code ${String(code)}, signal ${String(signal)})`,
+        });
     });
 
     try {
       const exitedEarly = new Promise<never>((_resolve, reject) => {
-        child.once("exit", (code, signal) => reject(new Error(`Harness exited before becoming ready (code ${String(code)}, signal ${String(signal)})`)));
+        child.once("exit", (code, signal) =>
+          reject(
+            new Error(
+              `Harness exited before becoming ready (code ${String(code)}, signal ${String(signal)})`,
+            ),
+          ),
+        );
       });
-      await Promise.race([waitForHttp(`http://127.0.0.1:${port}/`), exitedEarly]);
+      await Promise.race([
+        waitForHttp(`http://127.0.0.1:${port}/`),
+        exitedEarly,
+      ]);
       this.setStatus("ready");
       return this.getInfo();
     } catch (error) {
-      this.setStatus("failed", { errorSummary: redactSensitive(String(error)) });
+      this.setStatus("failed", {
+        errorSummary: redactSensitive(String(error)),
+      });
       await terminateProcessTree(child);
       throw error;
     }
   }
 
   async stop(): Promise<void> {
-    if (!this.child) { this.setStatus("stopped"); return; }
+    if (!this.child) {
+      this.setStatus("stopped");
+      return;
+    }
     const child = this.child;
     this.intentionalStops.add(child);
     this.setStatus("stopping");

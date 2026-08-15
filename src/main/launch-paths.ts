@@ -1,7 +1,10 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-function argumentCandidates(argv: readonly string[], isPackaged: boolean): readonly string[] {
+function argumentCandidates(
+  argv: readonly string[],
+  isPackaged: boolean,
+): readonly string[] {
   // Packaged: [app.exe, ...files]. Development: [electron.exe, app-entry, ...files].
   return argv.slice(isPackaged ? 1 : 2);
 }
@@ -21,7 +24,10 @@ export async function resolveLaunchDirectories(
       const info = await stat(candidate);
       if (!info.isDirectory()) continue;
       const canonical = await realpath(candidate);
-      const key = process.platform === "win32" ? canonical.toLocaleLowerCase("en-US") : canonical;
+      const key =
+        process.platform === "win32"
+          ? canonical.toLocaleLowerCase("en-US")
+          : canonical;
       if (seen.has(key)) continue;
       seen.add(key);
       directories.push(canonical);

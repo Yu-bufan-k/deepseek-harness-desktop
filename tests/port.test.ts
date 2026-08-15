@@ -7,7 +7,14 @@ const sockets = new Set<net.Socket>();
 afterEach(() => {
   for (const socket of sockets) socket.destroy();
   sockets.clear();
-  return Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  return Promise.all(
+    servers
+      .splice(0)
+      .map(
+        (server) =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+      ),
+  );
 });
 
 describe("loopback port helpers", () => {
@@ -21,10 +28,16 @@ describe("loopback port helpers", () => {
     const server = net.createServer((socket) => {
       sockets.add(socket);
       socket.on("close", () => sockets.delete(socket));
-      socket.end("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      socket.end(
+        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      );
     });
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
-    await expect(waitForHttp(`http://127.0.0.1:${port}`, 1_000, 10)).resolves.toBeUndefined();
+    await new Promise<void>((resolve) =>
+      server.listen(port, "127.0.0.1", resolve),
+    );
+    await expect(
+      waitForHttp(`http://127.0.0.1:${port}`, 1_000, 10),
+    ).resolves.toBeUndefined();
   });
 });

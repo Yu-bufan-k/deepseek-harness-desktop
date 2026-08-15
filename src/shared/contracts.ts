@@ -1,6 +1,13 @@
-import type { BillingSettings, BillingSettingsSnapshot, BillingUpdateResult, BillingUsageReport, BillingUsageSync } from "./billing.js";
+import type {
+  BillingSettings,
+  BillingSettingsSnapshot,
+  BillingUpdateResult,
+  BillingUsageReport,
+  BillingUsageSync,
+} from "./billing.js";
 
-export type HarnessStatus = "starting" | "ready" | "stopping" | "stopped" | "failed";
+export type HarnessStatus =
+  "starting" | "ready" | "stopping" | "stopped" | "failed";
 
 export interface HarnessInfo {
   status: HarnessStatus;
@@ -37,8 +44,16 @@ export interface HarnessUpdateState {
   errorSummary: string | null;
 }
 
-export interface BillingModelTarget { provider: string; model: string; }
-export interface BillingUpdateSnapshotResult extends Omit<BillingUpdateResult, "settings"> { settings: BillingSettingsSnapshot; }
+export interface BillingModelTarget {
+  provider: string;
+  model: string;
+}
+export interface BillingUpdateSnapshotResult extends Omit<
+  BillingUpdateResult,
+  "settings"
+> {
+  settings: BillingSettingsSnapshot;
+}
 export interface DeepSeekBalanceInfo {
   currency: "CNY" | "USD";
   totalBalance: string;
@@ -64,7 +79,8 @@ export type UpdateChannel = "stable" | "beta";
 export type ThemePreference = "light" | "dark" | "system";
 
 export type ReviewState = "unreviewed" | "reviewed" | "reverted";
-export type FileChangeKind = "added" | "modified" | "deleted" | "renamed" | "binary";
+export type FileChangeKind =
+  "added" | "modified" | "deleted" | "renamed" | "binary";
 
 export interface DiffHunk {
   id: string;
@@ -159,8 +175,12 @@ export interface McpHttpVisionBackendConfig extends VisionBackendBase {
   mapping: McpVisionArgumentMapping;
 }
 
-export type VisionBackendConfig = DirectVisionBackendConfig | McpStdioVisionBackendConfig | McpHttpVisionBackendConfig;
-export type McpVisionBackendConfig = McpStdioVisionBackendConfig | McpHttpVisionBackendConfig;
+export type VisionBackendConfig =
+  | DirectVisionBackendConfig
+  | McpStdioVisionBackendConfig
+  | McpHttpVisionBackendConfig;
+export type McpVisionBackendConfig =
+  McpStdioVisionBackendConfig | McpHttpVisionBackendConfig;
 
 export interface VisionSettings {
   policy: VisionPolicy;
@@ -284,7 +304,7 @@ export const IPC = {
   analyzeVision: "desktop:analyze-vision",
   cancelVision: "desktop:cancel-vision",
   getCachedVision: "desktop:get-cached-vision",
-  listVisionAttachments: "desktop:list-vision-attachments"
+  listVisionAttachments: "desktop:list-vision-attachments",
 } as const;
 
 export interface OpenWorkspaceRequest {
@@ -307,7 +327,7 @@ export interface DesktopApi {
   openSettings(): Promise<void>;
   openBilling(target?: BillingModelTarget): Promise<void>;
   openLegacyBilling(target?: BillingModelTarget): Promise<void>;
-  openWorkbench(view?: "changes" | "billing" | "vision" | "settings"): Promise<void>;
+  openWorkbench(view?: "changes" | "vision"): Promise<void>;
   checkUpdate(): Promise<UpdateState>;
   checkHarnessUpdate(): Promise<HarnessUpdateState>;
   downloadUpdate(): Promise<UpdateState>;
@@ -321,30 +341,61 @@ export interface DesktopApi {
   removeCredential(name: string): Promise<void>;
   getDeepSeekBalance(): Promise<DeepSeekBalanceSnapshot>;
   refreshDeepSeekBalance(): Promise<DeepSeekBalanceSnapshot>;
-  useOfficialBilling(target: BillingModelTarget, catalogProvider: string): Promise<BillingSettingsSnapshot>;
+  useOfficialBilling(
+    target: BillingModelTarget,
+    catalogProvider: string,
+  ): Promise<BillingSettingsSnapshot>;
   getBillingSettings(): Promise<BillingSettingsSnapshot>;
-  setBillingSettings(settings: BillingSettings): Promise<BillingSettingsSnapshot>;
+  setBillingSettings(
+    settings: BillingSettings,
+  ): Promise<BillingSettingsSnapshot>;
   checkBillingPrices(): Promise<BillingUpdateSnapshotResult>;
-  reportBillingUsage(index: BillingUsageSync, currentTarget?: BillingModelTarget): Promise<BillingUsageReport>;
+  reportBillingUsage(
+    index: BillingUsageSync,
+    currentTarget?: BillingModelTarget,
+  ): Promise<BillingUsageReport>;
   getBillingUsage(): Promise<BillingUsageReport>;
-  onBillingUsageChanged(listener: (report: BillingUsageReport) => void): () => void;
-  onBillingEditRequested(listener: (target: BillingModelTarget) => void): () => void;
-  onBillingChanged(listener: (settings: BillingSettingsSnapshot) => void): () => void;
+  onBillingUsageChanged(
+    listener: (report: BillingUsageReport) => void,
+  ): () => void;
+  onBillingEditRequested(
+    listener: (target: BillingModelTarget) => void,
+  ): () => void;
+  onBillingChanged(
+    listener: (settings: BillingSettingsSnapshot) => void,
+  ): () => void;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;
-  setActiveWorkspaceContext(sessionId: string, workspacePath: string | null): Promise<void>;
+  setActiveWorkspaceContext(
+    sessionId: string,
+    workspacePath: string | null,
+  ): Promise<void>;
   createChangeBatch(title: string): Promise<ChangeBatch>;
   closeChangeBatch(batchId: string): Promise<ChangeBatch>;
   listChangeBatches(): Promise<ChangeBatch[]>;
   getFileDiff(batchId: string, filePath: string): Promise<FileDiff>;
-  markChangeReviewed(batchId: string, filePath: string, hunkId?: string): Promise<ChangeBatch>;
+  markChangeReviewed(
+    batchId: string,
+    filePath: string,
+    hunkId?: string,
+  ): Promise<ChangeBatch>;
   revertChangeFile(batchId: string, filePath: string): Promise<ChangeBatch>;
-  revertChangeHunk(batchId: string, filePath: string, hunkId: string): Promise<ChangeBatch>;
-  onChangeBatchesChanged(listener: (batches: ChangeBatch[]) => void): () => void;
+  revertChangeHunk(
+    batchId: string,
+    filePath: string,
+    hunkId: string,
+  ): Promise<ChangeBatch>;
+  onChangeBatchesChanged(
+    listener: (batches: ChangeBatch[]) => void,
+  ): () => void;
   getVisionSettings(): Promise<VisionSettings>;
   setVisionSettings(settings: VisionSettings): Promise<VisionSettings>;
-  discoverVisionTools(backend: VisionBackendConfig): Promise<VisionToolDescriptor[]>;
-  testVisionBackend(backend: VisionBackendConfig): Promise<{ ok: true; tools?: VisionToolDescriptor[] }>;
+  discoverVisionTools(
+    backend: VisionBackendConfig,
+  ): Promise<VisionToolDescriptor[]>;
+  testVisionBackend(
+    backend: VisionBackendConfig,
+  ): Promise<{ ok: true; tools?: VisionToolDescriptor[] }>;
   analyzeVision(request: VisionRequest): Promise<VisionResult>;
   cancelVision(requestId: string): Promise<void>;
   getCachedVision(request: VisionRequest): Promise<VisionResult | null>;

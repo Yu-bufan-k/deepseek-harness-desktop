@@ -9,6 +9,6 @@ export default defineConfig({
     outDir: "../../dist/renderer/workbench",
     emptyOutDir: true,
     sourcemap: true,
-    target: "chrome142"
-  }
+    target: "chrome142",
+  },
 });
