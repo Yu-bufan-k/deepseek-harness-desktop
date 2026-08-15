@@ -1,4 +1,4 @@
-import type { BillingSettings, BillingUpdateResult, BillingUsageIndex, BillingUsageReport } from "./billing.js";
+import type { BillingSettings, BillingSettingsSnapshot, BillingUpdateResult, BillingUsageReport, BillingUsageSync } from "./billing.js";
 
 export type HarnessStatus = "starting" | "ready" | "stopping" | "stopped" | "failed";
 
@@ -38,6 +38,7 @@ export interface HarnessUpdateState {
 }
 
 export interface BillingModelTarget { provider: string; model: string; }
+export interface BillingUpdateSnapshotResult extends Omit<BillingUpdateResult, "settings"> { settings: BillingSettingsSnapshot; }
 
 export type UpdateChannel = "stable" | "beta";
 export type ThemePreference = "light" | "dark" | "system";
@@ -118,14 +119,14 @@ export interface DesktopApi {
   setCredential(name: string, value: string): Promise<void>;
   hasCredential(name: string): Promise<boolean>;
   removeCredential(name: string): Promise<void>;
-  getBillingSettings(): Promise<BillingSettings>;
-  setBillingSettings(settings: BillingSettings): Promise<BillingSettings>;
-  checkBillingPrices(): Promise<BillingUpdateResult>;
-  reportBillingUsage(index: BillingUsageIndex, currentTarget?: BillingModelTarget): Promise<BillingUsageReport>;
+  getBillingSettings(): Promise<BillingSettingsSnapshot>;
+  setBillingSettings(settings: BillingSettings): Promise<BillingSettingsSnapshot>;
+  checkBillingPrices(): Promise<BillingUpdateSnapshotResult>;
+  reportBillingUsage(index: BillingUsageSync, currentTarget?: BillingModelTarget): Promise<BillingUsageReport>;
   getBillingUsage(): Promise<BillingUsageReport>;
   onBillingUsageChanged(listener: (report: BillingUsageReport) => void): () => void;
   onBillingEditRequested(listener: (target: BillingModelTarget) => void): () => void;
-  onBillingChanged(listener: (settings: BillingSettings) => void): () => void;
+  onBillingChanged(listener: (settings: BillingSettingsSnapshot) => void): () => void;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;
 }

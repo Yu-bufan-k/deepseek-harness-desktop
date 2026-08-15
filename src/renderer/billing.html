@@ -227,16 +227,15 @@
   systemDark.addEventListener('change', () => { if (themePreference === 'system') applyTheme('system'); });
   function notify(message) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('show'); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2200); }
   function setStatus(message, phase = 'ready') { $('statusText').textContent = message; $('statusDot').className = `dot ${phase}`; }
-  function statusOf(rule, allRules) {
-    const now = Date.now(), start = Date.parse(rule.effectiveFrom);
-    if (start > now) return { label: `将于 ${new Date(start).toLocaleDateString()} 生效`, kind: '' };
-    if (rule.effectiveTo && Date.parse(rule.effectiveTo) <= now) return { label: '已停止生效', kind: '' };
-    const later = allRules.some((item) => item.provider === rule.provider && item.model === rule.model && Date.parse(item.effectiveFrom) > start && Date.parse(item.effectiveFrom) <= now);
-    return later ? { label: '历史价格', kind: '' } : { label: '当前生效', kind: 'current' };
+  function statusLabel(status, rule) {
+    if (status === 'future') return { label: `将于 ${new Date(rule.effectiveFrom).toLocaleDateString()} 生效`, kind: '' };
+    if (status === 'active') return { label: '当前生效', kind: 'current' };
+    if (status === 'overridden') return { label: '已被自定义规则覆盖', kind: '' };
+    if (status === 'expired') return { label: '已停止生效', kind: '' };
+    return { label: '历史价格', kind: '' };
   }
   const compactTokens = (value) => value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(value >= 1e4 ? 0 : 1)}K` : String(value);
-  const money = (currency, nanos) => { const value = Number(BigInt(nanos)) / 1e9; return new Intl.NumberFormat('zh-CN', { style: 'currency', currency, minimumFractionDigits: value < .01 ? 4 : 2, maximumFractionDigits: 6 }).format(value); };
-  const formatTotals = (totals, unknown = 0) => totals.map(({ currency, nanos }) => money(currency, nanos)).join(' + ') || (unknown ? '部分未计价' : '¥0.0000');
+  const formatTotals = (totals, unknown = 0) => totals.map(({ display }) => display).join(' + ') || (unknown ? '部分未计价' : '¥0.0000');
   function renderUsage() {
     const sessions = usageReport.sessions.filter((session) => session.requests);
     $('usageTotal').textContent = formatTotals(usageReport.totals, usageReport.unpricedRequests);
@@ -252,9 +251,9 @@
     }));
   }
   const rateCell = (value, label) => `<div class="rate-col"><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></div>`;
-  function officialCard(rule, rules) {
+  function officialCard(rule) {
     const card = document.createElement('article'); card.className = 'price-card';
-    const status = statusOf(rule, rules);
+    const status = statusLabel(billing.ruleStatuses[rule.id], rule);
     const rows = rule.peakRates
       ? `<div class="rate-row"><span class="rate-label">空闲时段</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存读取')}${rateCell(rule.rates.cacheWrite, '缓存写入')}${rateCell(rule.rates.output, '输出')}</div><div class="rate-row"><span class="rate-label">高峰时段</span>${rateCell(rule.peakRates.input, '输入')}${rateCell(rule.peakRates.cacheRead, '缓存读取')}${rateCell(rule.peakRates.cacheWrite, '缓存写入')}${rateCell(rule.peakRates.output, '输出')}</div>`
       : `<div class="rate-row"><span class="rate-label">标准价格</span>${rateCell(rule.rates.input, '输入')}${rateCell(rule.rates.cacheRead, '缓存读取')}${rateCell(rule.rates.cacheWrite, '缓存写入')}${rateCell(rule.rates.output, '输出')}</div>`;
@@ -277,7 +276,7 @@
     billing = next;
     $('billingAuto').checked = next.autoUpdate;
     $('sourceMeta').textContent = `${next.catalog.rules.length} 条官方价格 · ${next.customRules.length} 条自定义覆盖${next.lastCheckedAt ? ` · ${new Date(next.lastCheckedAt).toLocaleString()} 检查` : ' · 尚未联网检查'}`;
-    $('officialList').replaceChildren(...next.catalog.rules.map((rule) => officialCard(rule, next.catalog.rules)));
+    $('officialList').replaceChildren(...next.catalog.rules.map(officialCard));
     if (next.customRules.length) $('customList').replaceChildren(...next.customRules.map(customCard));
     else { const empty = document.createElement('div'); empty.className = 'empty'; empty.innerHTML = '<div><strong>当前没有自定义规则</strong>第三方模型会显示“未配置单价”，直到你添加对应规则。</div>'; $('customList').replaceChildren(empty); }
     renderUsage();
@@ -339,6 +338,7 @@
   window.desktop.onBillingEditRequested(handleBillingEditTarget);
   window.desktop.onInfoChanged((info) => applyTheme(info.themePreference));
   Promise.all([window.desktop.getInfo(), window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([info, settings, usage]) => { usageReport = usage; applyTheme(info.themePreference); render(settings); setStatus('价格清单已就绪'); });
+  setInterval(() => Promise.all([window.desktop.getBillingSettings(), window.desktop.getBillingUsage()]).then(([settings, usage]) => { usageReport = usage; render(settings); }).catch(() => {}), 60_000);
 </script>
 </body>
 </html>

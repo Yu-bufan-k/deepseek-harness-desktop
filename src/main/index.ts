@@ -15,7 +15,7 @@ import {
   type UpdateChannel,
   type UpdateState
 } from "../shared/contracts.js";
-import { summarizeBillingUsage, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample } from "../shared/billing.js";
+import { billingSettingsSnapshot, BillingUsageSummarizer, type BillingSettings, type BillingUsageIndex, type BillingUsageReport, type BillingUsageSample, type BillingUsageSync } from "../shared/billing.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -48,6 +48,8 @@ let directoryPickerBridge: DirectoryPickerBridge;
 let billing: BillingStore;
 let harnessUpdate: HarnessUpdateState = { phase: "idle", currentVersion: "", latestVersion: null, updateAvailable: false, checkedAt: null, errorSummary: null };
 let billingUsageIndex: BillingUsageIndex = { collectedAt: "", sessions: [] };
+const billingUsageSessions = new Map<string, BillingUsageIndex["sessions"][number]>();
+const billingUsageSummarizer = new BillingUsageSummarizer();
 let billingUsageWarnings: string[] = [];
 let billingCurrentTarget: BillingModelTarget | undefined;
 let billingUsageReport: BillingUsageReport;
@@ -137,7 +139,7 @@ function broadcastInfo(): void {
 }
 
 function broadcastBilling(): void {
-  const value = billing.get();
+  const value = billingSettingsSnapshot(billing.get());
   const report = refreshBillingReport();
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
@@ -304,30 +306,43 @@ function isBillingSample(value: unknown): value is BillingUsageSample {
       .every((key) => typeof sample[key] === "number" && Number.isSafeInteger(sample[key]) && (sample[key] as number) >= 0);
 }
 
-function normalizeBillingUsageIndex(value: unknown): { index: BillingUsageIndex; warnings: string[] } {
+function normalizeBillingUsageSync(value: unknown): { sync: BillingUsageSync; warnings: string[] } {
   if (!value || typeof value !== "object") throw new Error("无效的用量汇总");
-  const candidate = value as { collectedAt?: unknown; sessions?: unknown };
-  if (!Array.isArray(candidate.sessions)) throw new Error("无效的会话用量列表");
+  const candidate = value as { collectedAt?: unknown; sessionIds?: unknown; sessions?: unknown; droppedSessions?: unknown };
+  if (!Array.isArray(candidate.sessions) || !Array.isArray(candidate.sessionIds)) throw new Error("无效的会话用量列表");
+  if (candidate.sessionIds.length > 10_000 || candidate.sessions.length > 10_000) throw new Error("单次同步的会话数量超过安全上限");
+  const declaredIds = new Set(candidate.sessionIds);
+  if (!candidate.sessionIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256) || declaredIds.size !== candidate.sessionIds.length) throw new Error("无效或重复的会话 ID");
   const warnings: string[] = [];
-  const droppedSessions = Math.max(0, candidate.sessions.length - 10_000);
-  if (droppedSessions) warnings.push(`有 ${droppedSessions} 个对话超过单次同步安全上限，未纳入本次汇总，请缩小工作区历史范围后重试。`);
+  const droppedSessions = typeof candidate.droppedSessions === "number" && Number.isSafeInteger(candidate.droppedSessions) && candidate.droppedSessions >= 0 ? candidate.droppedSessions : 0;
+  if (droppedSessions) warnings.push(`有 ${droppedSessions} 个较早对话超过安全上限，未纳入本次汇总。`);
   let droppedSamples = 0;
-  const sessions = candidate.sessions.slice(-10_000).map((entry) => {
+  const sessions = candidate.sessions.map((entry) => {
       if (!entry || typeof entry !== "object") throw new Error("无效的会话用量");
-      const session = entry as { sessionId?: unknown; title?: unknown; samples?: unknown };
-      if (typeof session.sessionId !== "string" || typeof session.title !== "string" || !Array.isArray(session.samples)) throw new Error("无效的会话用量");
+      const session = entry as { sessionId?: unknown; title?: unknown; revision?: unknown; samples?: unknown };
+      if (typeof session.sessionId !== "string" || !declaredIds.has(session.sessionId) || typeof session.title !== "string"
+        || typeof session.revision !== "string" || !session.revision || session.revision.length > 128 || !Array.isArray(session.samples)) throw new Error("无效的会话用量");
       const samples = session.samples.slice(-100_000);
       droppedSamples += session.samples.length - samples.length;
       if (!samples.every(isBillingSample)) throw new Error("无效的请求用量");
-      return { sessionId: session.sessionId.slice(0, 256), title: session.title.slice(0, 500), samples };
+      return { sessionId: session.sessionId, title: session.title.slice(0, 500), revision: session.revision, samples };
     });
+  if (new Set(sessions.map((session) => session.sessionId)).size !== sessions.length) throw new Error("单次同步包含重复会话");
   if (droppedSamples) warnings.push(`有 ${droppedSamples} 条较早请求超过单对话安全上限，未纳入本次汇总。`);
   const collectedAt = typeof candidate.collectedAt === "string" && Number.isFinite(Date.parse(candidate.collectedAt)) ? candidate.collectedAt : new Date().toISOString();
-  return { index: { collectedAt, sessions }, warnings };
+  return { sync: { collectedAt, sessionIds: candidate.sessionIds, sessions, droppedSessions }, warnings };
+}
+
+function applyBillingUsageSync(sync: BillingUsageSync): number {
+  const activeIds = new Set(sync.sessionIds);
+  for (const id of billingUsageSessions.keys()) if (!activeIds.has(id)) billingUsageSessions.delete(id);
+  for (const session of sync.sessions) billingUsageSessions.set(session.sessionId, session);
+  billingUsageIndex = { collectedAt: sync.collectedAt, sessions: sync.sessionIds.map((id) => billingUsageSessions.get(id)).filter((session): session is BillingUsageIndex["sessions"][number] => Boolean(session)) };
+  return sync.sessionIds.length - billingUsageIndex.sessions.length;
 }
 
 function refreshBillingReport(): BillingUsageReport {
-  billingUsageReport = summarizeBillingUsage(billing.get(), billingUsageIndex, new Date().toISOString(), billingCurrentTarget, billingUsageWarnings);
+  billingUsageReport = billingUsageSummarizer.summarize(billing.get(), billingUsageIndex, new Date().toISOString(), billingCurrentTarget, billingUsageWarnings);
   return billingUsageReport;
 }
 
@@ -537,22 +552,22 @@ function registerIpc(): void {
   handle(IPC.setCredential, async (_event, name: string, value: string) => { await credentials.set(name, value); });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
   handle(IPC.removeCredential, (_event, name: string) => credentials.remove(name));
-  handle(IPC.getBillingSettings, () => billing.get());
+  handle(IPC.getBillingSettings, () => billingSettingsSnapshot(billing.get()));
   handle(IPC.setBillingSettings, async (_event, value: BillingSettings) => {
     const saved = await billing.saveUserSettings(value);
     broadcastBilling();
-    return saved;
+    return billingSettingsSnapshot(saved);
   });
   handle(IPC.checkBillingPrices, async () => {
     const result = await billing.checkForUpdates();
     broadcastBilling();
-    return result;
+    return { ...result, settings: billingSettingsSnapshot(result.settings) };
   });
   handle(IPC.getBillingUsage, () => refreshBillingReport());
   handle(IPC.reportBillingUsage, (_event, value: unknown, targetValue?: unknown) => {
-    const normalized = normalizeBillingUsageIndex(value);
-    billingUsageIndex = normalized.index;
-    billingUsageWarnings = normalized.warnings;
+    const normalized = normalizeBillingUsageSync(value);
+    const missingSessions = applyBillingUsageSync(normalized.sync);
+    billingUsageWarnings = missingSessions ? [...normalized.warnings, `有 ${missingSessions} 个对话尚未完成增量同步，将在下次更新后计入。`] : normalized.warnings;
     billingCurrentTarget = billingTarget(targetValue);
     broadcastBillingUsage();
     return billingUsageReport;
@@ -645,7 +660,7 @@ void app.whenReady().then(async () => {
   await settings.load();
   billing = new BillingStore(settings, app.getAppPath());
   await billing.load();
-  billingUsageReport = summarizeBillingUsage(billing.get(), billingUsageIndex, new Date().toISOString());
+  billingUsageReport = billingUsageSummarizer.summarize(billing.get(), billingUsageIndex, new Date().toISOString());
   credentials = new CredentialStore(userData);
   updates = new UpdateManager(settings.get().updateChannel, settings.get().updateRepository);
   directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);

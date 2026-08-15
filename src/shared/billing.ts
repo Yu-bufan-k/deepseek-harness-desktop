@@ -42,6 +42,8 @@ export interface BillingSettings {
 }
 
 export interface BillingUpdateResult { updated: boolean; checkedAt: string; settings: BillingSettings; message: string; }
+export type BillingRuleStatus = "future" | "active" | "overridden" | "expired" | "historical";
+export interface BillingSettingsSnapshot extends BillingSettings { ruleStatuses: Record<string, BillingRuleStatus>; }
 
 export interface BillingUsageSample {
   provider: string;
@@ -53,9 +55,10 @@ export interface BillingUsageSample {
   outputTokens: number;
 }
 
-export interface BillingSessionUsage { sessionId: string; title: string; samples: BillingUsageSample[]; }
+export interface BillingSessionUsage { sessionId: string; title: string; revision: string; samples: BillingUsageSample[]; }
 export interface BillingUsageIndex { collectedAt: string; sessions: BillingSessionUsage[]; }
-export interface BillingMoney { currency: string; /** Integer nanounits for exact IPC-safe addition. */ nanos: string; }
+export interface BillingUsageSync { collectedAt: string; sessionIds: string[]; sessions: BillingSessionUsage[]; droppedSessions?: number; }
+export interface BillingMoney { currency: string; /** Integer nanounits for exact IPC-safe addition. */ nanos: string; /** Locale-formatted without floating-point conversion. */ display: string; }
 
 export interface BillingCostLine extends BillingUsageSample {
   ruleId: string | null;
@@ -118,7 +121,7 @@ const normalize = (value: string): string => value.trim().toLowerCase();
 const billingFormatters = new Map<string, Intl.DateTimeFormat>();
 
 export function isBillingPeakWindow(minute: number, startMinute: number, endMinute: number): boolean {
-  if (startMinute === endMinute) return true;
+  if (startMinute === endMinute) return false;
   return startMinute < endMinute ? minute >= startMinute && minute < endMinute : minute >= startMinute || minute < endMinute;
 }
 
@@ -147,6 +150,19 @@ export function selectBillingRule(settings: BillingSettings, sample: BillingUsag
       return Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom) || right.id.localeCompare(left.id);
     });
   return candidates[0] ?? null;
+}
+
+export function billingRuleStatus(settings: BillingSettings, rule: BillingPriceRule, at = Date.now()): BillingRuleStatus {
+  if (Date.parse(rule.effectiveFrom) > at) return "future";
+  if (rule.effectiveTo !== undefined && Date.parse(rule.effectiveTo) <= at) return "expired";
+  const selected = selectBillingRule(settings, { provider: rule.provider, model: rule.model, time: at, uncachedInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 });
+  if (selected?.id === rule.id) return "active";
+  if (selected && (selected.mode === "custom" || selected.mode === "free")) return "overridden";
+  return "historical";
+}
+
+export function billingSettingsSnapshot(settings: BillingSettings, at = Date.now()): BillingSettingsSnapshot {
+  return { ...settings, ruleStatuses: Object.fromEntries([...settings.catalog.rules, ...settings.customRules].map((rule) => [rule.id, billingRuleStatus(settings, rule, at)])) };
 }
 
 function decimalToScaledInteger(value: number, scale: number): bigint {
@@ -204,43 +220,99 @@ export function calculateBillingCost(settings: BillingSettings, sample: BillingU
 function addMoney(target: Map<string, bigint>, currency: string, nanos: string): void {
   target.set(currency, (target.get(currency) ?? 0n) + BigInt(nanos));
 }
-const moneyList = (totals: Map<string, bigint>): BillingMoney[] => [...totals].sort(([left], [right]) => left.localeCompare(right)).map(([currency, nanos]) => ({ currency, nanos: nanos.toString() }));
-export function summarizeBillingUsage(settings: BillingSettings, index: BillingUsageIndex, syncedAt: string, currentTarget?: { provider: string; model: string }, warnings: string[] = []): BillingUsageReport {
-  const totals = new Map<string, bigint>();
-  let requests = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, outputTokens = 0, unpricedRequests = 0, latestTime = 0;
-  const sessions = index.sessions.map((session): BillingSessionUsageSummary => {
-    const sessionTotals = new Map<string, bigint>();
-    const models = new Map<string, { summary: Omit<BillingModelUsageSummary, "totals" | "currentPricing">; totals: Map<string, bigint> }>();
-    let sessionInput = 0, sessionCacheRead = 0, sessionCacheWrite = 0, sessionOutput = 0, sessionUnpriced = 0, sessionLatest = 0;
-    for (const sample of session.samples) {
-      requests += 1; sessionLatest = Math.max(sessionLatest, sample.time); latestTime = Math.max(latestTime, sample.time);
-      sessionInput += sample.uncachedInputTokens; inputTokens += sample.uncachedInputTokens;
-      sessionCacheRead += sample.cacheReadTokens; cacheReadTokens += sample.cacheReadTokens;
-      sessionCacheWrite += sample.cacheWriteTokens; cacheWriteTokens += sample.cacheWriteTokens;
-      sessionOutput += sample.outputTokens; outputTokens += sample.outputTokens;
-      const key = JSON.stringify([normalize(sample.provider), normalize(sample.model)]);
-      let model = models.get(key);
-      if (!model) {
-        model = { summary: { provider: sample.provider, model: sample.model, requests: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unpricedRequests: 0 }, totals: new Map() };
-        models.set(key, model);
-      }
-      model.summary.requests += 1; model.summary.inputTokens += sample.uncachedInputTokens; model.summary.cacheReadTokens += sample.cacheReadTokens;
-      model.summary.cacheWriteTokens += sample.cacheWriteTokens; model.summary.outputTokens += sample.outputTokens;
-      const line = calculateBillingCost(settings, sample);
-      if (line.amountNanos === null || line.currency === null) { unpricedRequests += 1; sessionUnpriced += 1; model.summary.unpricedRequests += 1; }
-      else { addMoney(totals, line.currency, line.amountNanos); addMoney(sessionTotals, line.currency, line.amountNanos); addMoney(model.totals, line.currency, line.amountNanos); }
+
+export function formatBillingMoney(currency: string, nanosValue: string, locale = "zh-CN"): string {
+  const nanos = BigInt(nanosValue);
+  if (nanos < 0n) throw new Error("计费金额不能为负数");
+  const roundedMicros = (nanos + 500n) / 1_000n;
+  const whole = roundedMicros / 1_000_000n;
+  let fraction = (roundedMicros % 1_000_000n).toString().padStart(6, "0");
+  const minimumDigits = nanos < 10_000_000n ? 4 : 2;
+  while (fraction.length > minimumDigits && fraction.endsWith("0")) fraction = fraction.slice(0, -1);
+  const groupedWhole = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(whole);
+  const decimal = new Intl.NumberFormat(locale, { minimumFractionDigits: 1 }).formatToParts(0).find((part) => part.type === "decimal")?.value ?? ".";
+  const number = `${groupedWhole}${fraction ? decimal + fraction : ""}`;
+  let inserted = false;
+  return new Intl.NumberFormat(locale, { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).formatToParts(0n).map((part) => {
+    if (["integer", "group", "decimal", "fraction"].includes(part.type)) {
+      if (inserted) return "";
+      inserted = true;
+      return number;
+    }
+    return part.value;
+  }).join("");
+}
+
+const moneyList = (totals: Map<string, bigint>): BillingMoney[] => [...totals]
+  .sort(([left], [right]) => left.localeCompare(right))
+  .map(([currency, nanos]) => ({ currency, nanos: nanos.toString(), display: formatBillingMoney(currency, nanos.toString()) }));
+
+function summarizeSession(settings: BillingSettings, session: BillingSessionUsage): BillingSessionUsageSummary {
+  const sessionTotals = new Map<string, bigint>();
+  const models = new Map<string, { summary: Omit<BillingModelUsageSummary, "totals" | "currentPricing">; totals: Map<string, bigint> }>();
+  let inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, outputTokens = 0, unpricedRequests = 0, latestTime = 0;
+  for (const sample of session.samples) {
+    latestTime = Math.max(latestTime, sample.time);
+    inputTokens += sample.uncachedInputTokens; cacheReadTokens += sample.cacheReadTokens; cacheWriteTokens += sample.cacheWriteTokens; outputTokens += sample.outputTokens;
+    const key = JSON.stringify([normalize(sample.provider), normalize(sample.model)]);
+    let model = models.get(key);
+    if (!model) {
+      model = { summary: { provider: sample.provider, model: sample.model, requests: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unpricedRequests: 0 }, totals: new Map() };
+      models.set(key, model);
+    }
+    model.summary.requests += 1; model.summary.inputTokens += sample.uncachedInputTokens; model.summary.cacheReadTokens += sample.cacheReadTokens;
+    model.summary.cacheWriteTokens += sample.cacheWriteTokens; model.summary.outputTokens += sample.outputTokens;
+    const line = calculateBillingCost(settings, sample);
+    if (line.amountNanos === null || line.currency === null) { unpricedRequests += 1; model.summary.unpricedRequests += 1; }
+    else { addMoney(sessionTotals, line.currency, line.amountNanos); addMoney(model.totals, line.currency, line.amountNanos); }
+  }
+  return {
+    sessionId: session.sessionId, title: session.title, requests: session.samples.length, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens,
+    unpricedRequests, lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null, totals: moneyList(sessionTotals),
+    models: [...models.values()].map(({ summary, totals }) => ({ ...summary, totals: moneyList(totals), currentPricing: null }))
+  };
+}
+
+const settingsCacheKey = (settings: BillingSettings): string => JSON.stringify({ catalog: settings.catalog, customRules: settings.customRules });
+
+export class BillingUsageSummarizer {
+  private settingsKey = "";
+  private readonly sessionCache = new Map<string, { revision: string; title: string; summary: BillingSessionUsageSummary }>();
+  private hits = 0;
+  private misses = 0;
+
+  summarize(settings: BillingSettings, index: BillingUsageIndex, syncedAt: string, currentTarget?: { provider: string; model: string }, warnings: string[] = [], at = Date.now()): BillingUsageReport {
+    const nextSettingsKey = settingsCacheKey(settings);
+    if (nextSettingsKey !== this.settingsKey) { this.settingsKey = nextSettingsKey; this.sessionCache.clear(); }
+    const activeIds = new Set(index.sessions.map((session) => session.sessionId));
+    for (const id of this.sessionCache.keys()) if (!activeIds.has(id)) this.sessionCache.delete(id);
+    const sessions = index.sessions.map((session) => {
+      let cached = this.sessionCache.get(session.sessionId);
+      if (!cached || cached.revision !== session.revision || cached.title !== session.title) {
+        cached = { revision: session.revision, title: session.title, summary: summarizeSession(settings, session) };
+        this.sessionCache.set(session.sessionId, cached); this.misses += 1;
+      } else this.hits += 1;
+      return { ...cached.summary, models: cached.summary.models.map((model) => ({ ...model, currentPricing: resolveBillingPrice(settings, model.provider, model.model, at) })) };
+    });
+    const totals = new Map<string, bigint>();
+    let requests = 0, inputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, outputTokens = 0, unpricedRequests = 0, latestTime = 0;
+    for (const session of sessions) {
+      requests += session.requests; inputTokens += session.inputTokens; cacheReadTokens += session.cacheReadTokens; cacheWriteTokens += session.cacheWriteTokens;
+      outputTokens += session.outputTokens; unpricedRequests += session.unpricedRequests;
+      if (session.lastUsageAt) latestTime = Math.max(latestTime, Date.parse(session.lastUsageAt));
+      for (const total of session.totals) addMoney(totals, total.currency, total.nanos);
     }
     return {
-      sessionId: session.sessionId, title: session.title, requests: session.samples.length, inputTokens: sessionInput, cacheReadTokens: sessionCacheRead,
-      cacheWriteTokens: sessionCacheWrite, outputTokens: sessionOutput, unpricedRequests: sessionUnpriced,
-      lastUsageAt: sessionLatest ? new Date(sessionLatest).toISOString() : null, totals: moneyList(sessionTotals),
-      models: [...models.values()].map(({ summary, totals: modelTotals }) => ({ ...summary, totals: moneyList(modelTotals), currentPricing: resolveBillingPrice(settings, summary.provider, summary.model, Date.now()) }))
+      syncedAt, collectedAt: index.collectedAt, lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null, requests, inputTokens, cacheReadTokens,
+      cacheWriteTokens, outputTokens, unpricedRequests, totals: moneyList(totals), sessions,
+      currentTarget: currentTarget ? { ...currentTarget, pricing: resolveBillingPrice(settings, currentTarget.provider, currentTarget.model, at) } : null,
+      warnings: [...warnings]
     };
-  });
-  return {
-    syncedAt, collectedAt: index.collectedAt, lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null, requests, inputTokens, cacheReadTokens,
-    cacheWriteTokens, outputTokens, unpricedRequests, totals: moneyList(totals), sessions,
-    currentTarget: currentTarget ? { ...currentTarget, pricing: resolveBillingPrice(settings, currentTarget.provider, currentTarget.model, Date.now()) } : null,
-    warnings: [...warnings]
-  };
+  }
+
+  cacheStats(): { hits: number; misses: number; sessions: number } { return { hits: this.hits, misses: this.misses, sessions: this.sessionCache.size }; }
+}
+
+export function summarizeBillingUsage(settings: BillingSettings, index: BillingUsageIndex, syncedAt: string, currentTarget?: { provider: string; model: string }, warnings: string[] = [], at = Date.now()): BillingUsageReport {
+  return new BillingUsageSummarizer().summarize(settings, index, syncedAt, currentTarget, warnings, at);
 }

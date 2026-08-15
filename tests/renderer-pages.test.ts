@@ -30,6 +30,9 @@ describe("renderer pages", () => {
     expect(html).toContain("结束生效时间（可选）");
     expect(html).not.toContain("function selectRule");
     expect(html).not.toContain("function costOf");
+    expect(html).not.toContain("function statusOf");
+    expect(html).not.toContain("Number(BigInt");
+    expect(html).toContain("billing.ruleStatuses[rule.id]");
   });
 
   it("provides a responsive session billing rail with per-model history", async () => {
@@ -44,12 +47,16 @@ describe("renderer pages", () => {
     expect(source).not.toContain("const selectRule");
     expect(source).not.toContain("const costOf");
     expect(source).not.toContain("const ratesAt");
+    expect(source).not.toContain("Number(BigInt");
+    expect(source).toContain("sentRevisionsRef");
+    expect(source).toContain("sessions: changed");
   });
 
   it("keeps separate retry requests additive in the billing projection", async () => {
     const source = await readFile(new URL("../plugins/billing/index.js", import.meta.url), "utf8");
     expect(source).toContain("context: event.data, last: null");
-    expect(source).toContain("stateVersion: 2");
+    expect(source).toContain("stateVersion: 3");
+    expect(source).toContain("revision: state.revision + 1");
   });
 
   it("keeps the billing application-menu label unclipped", async () => {

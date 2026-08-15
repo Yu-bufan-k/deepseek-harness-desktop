@@ -9,7 +9,7 @@ import {
   type ThemePreference,
   type UpdateChannel
 } from "../shared/contracts.js";
-import type { BillingSettings, BillingUsageIndex, BillingUsageReport } from "../shared/billing.js";
+import type { BillingSettings, BillingSettingsSnapshot, BillingUsageReport, BillingUsageSync } from "../shared/billing.js";
 
 ipcRenderer.on(IPC.openWorkspace, (_event, request: OpenWorkspaceRequest) => {
   window.postMessage({ type: IPC.openWorkspace, request }, window.location.origin);
@@ -46,7 +46,7 @@ const api: DesktopApi = {
   getBillingSettings: () => ipcRenderer.invoke(IPC.getBillingSettings),
   setBillingSettings: (settings: BillingSettings) => ipcRenderer.invoke(IPC.setBillingSettings, settings),
   checkBillingPrices: () => ipcRenderer.invoke(IPC.checkBillingPrices),
-  reportBillingUsage: (index: BillingUsageIndex, currentTarget?: BillingModelTarget) => ipcRenderer.invoke(IPC.reportBillingUsage, index, currentTarget),
+  reportBillingUsage: (index: BillingUsageSync, currentTarget?: BillingModelTarget) => ipcRenderer.invoke(IPC.reportBillingUsage, index, currentTarget),
   getBillingUsage: () => ipcRenderer.invoke(IPC.getBillingUsage),
   onBillingUsageChanged: (listener: (report: BillingUsageReport) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, report: BillingUsageReport) => listener(report);
@@ -63,8 +63,8 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC.infoChanged, handler);
     return () => ipcRenderer.removeListener(IPC.infoChanged, handler);
   },
-  onBillingChanged: (listener: (settings: BillingSettings) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, settings: BillingSettings) => listener(settings);
+  onBillingChanged: (listener: (settings: BillingSettingsSnapshot) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, settings: BillingSettingsSnapshot) => listener(settings);
     ipcRenderer.on(IPC.billingChanged, handler);
     return () => ipcRenderer.removeListener(IPC.billingChanged, handler);
   },

@@ -43,6 +43,7 @@
     "cross-env": "10.0.0",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
+    "happy-dom": "20.11.2",
     "rimraf": "6.0.1",
     "tsup": "8.5.0",
     "typescript": "5.9.2",

@@ -43,6 +43,10 @@ describe("BillingStore", () => {
     expect(migrated.rules[0]?.effectiveTo).toBe("2027-01-01T00:00:00Z");
   });
 
+  it("rejects ambiguous zero-length peak windows", () => {
+    expect(() => validateCatalog({ ...catalog(), peakSchedules: [{ id: "bad", label: "Bad", timezone: "Asia/Shanghai", windows: [{ startMinute: 60, endMinute: 60 }] }] })).toThrow(/价格清单/);
+  });
+
   it("rejects deleting or changing historical economics, but permits labels", () => {
     const current = catalog();
     expect(() => assertAppendOnlyCatalog(current, { ...catalog("2026-08-15T00:00:00Z"), rules: [] })).toThrow(/删除或修改/);

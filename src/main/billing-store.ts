@@ -30,7 +30,7 @@ function validSchedule(value: unknown): value is BillingPeakSchedule {
     && typeof schedule.timezone === "string" && validTimezone(schedule.timezone)
     && Array.isArray(schedule.windows) && schedule.windows.length > 0
     && schedule.windows.every((window) => Number.isInteger(window.startMinute) && window.startMinute >= 0 && window.startMinute < 1440
-      && Number.isInteger(window.endMinute) && window.endMinute >= 0 && window.endMinute < 1440);
+      && Number.isInteger(window.endMinute) && window.endMinute >= 0 && window.endMinute < 1440 && window.startMinute !== window.endMinute);
 }
 
 function validRule(value: unknown): value is BillingPriceRule {

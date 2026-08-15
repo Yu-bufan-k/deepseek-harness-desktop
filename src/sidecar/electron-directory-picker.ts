@@ -12,13 +12,16 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
     const RESULT = "desktop:open-workspace-result";
     const React = require("react");
     const inject = ["workspaces", "sessions", "slots", "modelDirectories"];
-    const money = (currency, nanos) => {
-      const value = Number(BigInt(nanos)) / 1e9;
-      return new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
+    const projectionOf = (value) => {
+      if (value && Array.isArray(value.samples) && typeof value.revision === "string") return value;
+      const samples = Array.isArray(value) ? value : [];
+      const last = samples[samples.length - 1];
+      return { revision: "legacy:" + samples.length + ":" + (last ? JSON.stringify(last) : "empty"), samples };
     };
     const compactTokens = (value) => value >= 1e6 ? (value / 1e6).toFixed(1) + "M" : value >= 1e3 ? (value / 1e3).toFixed(value >= 1e4 ? 0 : 1) + "K" : String(value);
     function UsageMeter({ useProjection, modelDirectory, sessionsList, sessionId }) {
-      const usage = useProjection("billingUsage") ?? [];
+      const currentProjection = projectionOf(useProjection("billingUsage"));
+      const usage = currentProjection.samples;
       const modelState = React.useSyncExternalStore(
         (listener) => modelDirectory.subscribe(listener),
         () => modelDirectory.getSnapshot()
@@ -29,32 +32,46 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       );
       const [report, setReport] = React.useState(null);
       const [billingRevision, setBillingRevision] = React.useState(0);
+      const [clockRevision, setClockRevision] = React.useState(0);
       const [wide, setWide] = React.useState(false);
       const [open, setOpen] = React.useState(false);
       const [detail, setDetail] = React.useState(null);
       const rootRef = React.useRef(null);
+      const sentRevisionsRef = React.useRef(new Map());
       const selected = modelState?.current ?? usage[usage.length - 1] ?? null;
       React.useEffect(() => window.desktop?.onBillingChanged(() => setBillingRevision((value) => value + 1)), []);
+      React.useEffect(() => { const timer = setInterval(() => setClockRevision((value) => value + 1), 60_000); return () => clearInterval(timer); }, []);
       React.useEffect(() => {
-        const sessions = (sessionsState.ids ?? []).map((id) => {
+        const allSessions = (sessionsState.ids ?? []).map((id) => {
           const summary = sessionsState.byId?.[id] ?? {};
-          const projected = summary.projectionValues?.billingUsage;
+          const projected = id === sessionId ? currentProjection : projectionOf(summary.projectionValues?.billingUsage);
           return {
             sessionId: id,
             title: summary.displayTitle || summary.title || "未命名对话",
-            samples: id === sessionId ? usage : (Array.isArray(projected) ? projected : [])
+            revision: projected.revision,
+            samples: projected.samples
           };
         });
-        if (sessionId && !sessions.some((session) => session.sessionId === sessionId)) {
-          sessions.push({ sessionId, title: "当前对话", samples: usage });
+        if (sessionId && !allSessions.some((session) => session.sessionId === sessionId)) {
+          allSessions.push({ sessionId, title: "当前对话", revision: currentProjection.revision, samples: usage });
         }
+        const droppedSessions = Math.max(0, allSessions.length - 10_000);
+        const sessions = allSessions.slice(-10_000);
+        const sessionIds = sessions.map((session) => session.sessionId);
+        const changed = sessions.filter((session) => sentRevisionsRef.current.get(session.sessionId) !== session.revision + "\u0000" + session.title);
         let alive = true;
         const target = selected?.provider && selected?.model ? { provider: selected.provider, model: selected.model } : undefined;
-        window.desktop?.reportBillingUsage({ collectedAt: new Date().toISOString(), sessions }, target)
-          .then((value) => { if (alive) setReport(value); })
-          .catch((error) => { if (alive) setReport({ error: error instanceof Error ? error.message : String(error) }); });
-        return () => { alive = false; };
-      }, [sessionsState, sessionId, usage, selected?.provider, selected?.model, billingRevision]);
+        const timer = setTimeout(() => window.desktop?.reportBillingUsage({ collectedAt: new Date().toISOString(), sessionIds, sessions: changed, droppedSessions }, target)
+          .then((value) => {
+            if (!alive) return;
+            const active = new Set(sessionIds);
+            for (const id of sentRevisionsRef.current.keys()) if (!active.has(id)) sentRevisionsRef.current.delete(id);
+            for (const session of changed) sentRevisionsRef.current.set(session.sessionId, session.revision + "\u0000" + session.title);
+            setReport(value);
+          })
+          .catch((error) => { if (alive) setReport({ error: error instanceof Error ? error.message : String(error) }); }), 75);
+        return () => { alive = false; clearTimeout(timer); };
+      }, [sessionsState, sessionId, currentProjection.revision, selected?.provider, selected?.model, billingRevision, clockRevision]);
       React.useEffect(() => {
         let frame = 0;
         let lastFit = null;
@@ -110,7 +127,7 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         return [key, { ...model, key, input: model.inputTokens + model.cacheReadTokens + model.cacheWriteTokens, cache: model.cacheReadTokens + model.cacheWriteTokens, output: model.outputTokens, unknown: model.unpricedRequests, pricing: model.currentPricing, rule: model.currentPricing?.rule ?? null }];
       }));
       const unknown = session.unpricedRequests, inputTokens = session.inputTokens + session.cacheReadTokens + session.cacheWriteTokens, outputTokens = session.outputTokens;
-      const summary = totals.map(({ currency, nanos }) => money(currency, nanos)).join(" + ");
+      const summary = totals.map(({ display }) => display).join(" + ");
       const label = summary || (unknown ? "未计价" : "¥0.0000");
       const currentKey = selected?.provider && selected?.model ? JSON.stringify([selected.provider, selected.model]) : null;
       if (currentKey && !models.has(currentKey)) {
@@ -120,13 +137,13 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
       const previous = [...models.values()].filter((model) => model.key !== currentKey).reverse();
       const orderedModels = current ? [current, ...previous] : previous;
       const detailModel = detail ? models.get(detail.key) : null;
-      const modelAmount = (model) => model.totals.map(({ currency, nanos }) => money(currency, nanos)).join(" + ") || (model.unknown || !model.rule ? "未配置价格" : "¥0.0000");
+      const modelAmount = (model) => model.totals.map(({ display }) => display).join(" + ") || (model.unknown || !model.rule ? "未配置价格" : "¥0.0000");
       const ruleSummary = (pricing) => {
         if (!pricing) return "尚未匹配价格规则";
         const rates = pricing.rates;
         return pricing.rule.currency + "/百万 Token · " + (pricing.scheduleLabel ? (pricing.isPeak ? "当前高峰价 · " : "当前空闲价 · ") : "") + "输入 " + rates.input + " · 缓存读取 " + rates.cacheRead + " · 缓存写入 " + rates.cacheWrite + " · 输出 " + rates.output;
       };
-      const amountRows = totals.map(({ currency, nanos }) => h("div", { className: "dsh-cost-total", key: currency }, h("span", null, currency + " 预估"), h("strong", null, money(currency, nanos))));
+      const amountRows = totals.map(({ currency, display }) => h("div", { className: "dsh-cost-total", key: currency }, h("span", null, currency + " 预估"), h("strong", null, display)));
       if (!amountRows.length) amountRows.push(h("div", { className: "dsh-cost-total", key: "empty" }, h("span", null, "本会话预估"), h("strong", null, unknown ? "未配置单价" : "¥0.0000")));
       const openModelDetail = (event, model) => {
         const top = Math.min(Math.max(12, event.currentTarget.getBoundingClientRect().top - 8), Math.max(12, window.innerHeight - 356));
@@ -228,7 +245,7 @@ function injectDesktopClient(html: string): string {
   const row = JSON.stringify({
     id: CLIENT_PLUGIN_ID,
     url: CLIENT_PLUGIN_PATH,
-    rev: "1",
+    rev: "2",
     inject: ["workspaces", "sessions", "slots", "modelDirectories"],
     immediately: true
   });

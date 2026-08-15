@@ -7,7 +7,7 @@ const buckets = z.object({
   outputTokens: z.number().int().nonnegative()
 }).strict();
 const sample = buckets.extend({ provider: z.string(), model: z.string(), time: z.number() }).strict();
-const schema = z.array(sample);
+const schema = z.object({ revision: z.string(), samples: z.array(sample) }).strict();
 
 const fromUsage = (usage) => ({
   uncachedInputTokens: usage.inputTokens,
@@ -19,7 +19,7 @@ const fromUsage = (usage) => ({
 const definition = {
   key: "billingUsage",
   schema,
-  init: () => ({ context: null, samples: [], last: null }),
+  init: () => ({ context: null, samples: [], last: null, revision: 0 }),
   apply: (state, event) => {
     // A retry can reuse the same turn/step. Resetting `last` here keeps usage
     // from separate provider requests additive, while streaming usage updates
@@ -38,10 +38,10 @@ const definition = {
     const next = { provider: state.context.provider, model: state.context.model, time: event.time, ...fromUsage(usage) };
     const replacing = state.last && state.last.turn === turn && state.last.step === step;
     const samples = replacing ? [...state.samples.slice(0, -1), next] : [...state.samples, next];
-    return { ...state, samples, last: { turn, step } };
+    return { ...state, samples, last: { turn, step }, revision: state.revision + 1 };
   },
-  view: (state) => state.samples,
-  stateVersion: 2
+  view: (state) => ({ revision: String(state.revision), samples: state.samples }),
+  stateVersion: 3
 };
 
 export const name = "desktop-billing";
