@@ -230,6 +230,35 @@ export interface AnalyticsReport {
   errors: AnalyticsErrorRow[];
 }
 
+/** 生图服务：OpenAI 兼容 images API（智谱 CogView / 百炼 wanx 等），direct 后端。 */
+export interface ImageBackendConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  model: string;
+  baseUrl: string;
+  credentialName: string;
+}
+
+export interface ImageSettings {
+  defaultBackendId: string | null;
+  /** 图片存盘目录；null = 默认 userData/images */
+  imageDirectory: string | null;
+  backends: ImageBackendConfig[];
+}
+
+export interface GeneratedImage {
+  imageId: string;
+  mimeType: string;
+  filePath: string;
+}
+
+/** 生图结果：全部方案 + 用户选中的一张；selected 为 null 表示用户放弃选择。 */
+export interface GeneratedImageSelection {
+  images: GeneratedImage[];
+  selected: GeneratedImage | null;
+}
+
 /** 视觉工具经桥调用主进程 VisionService 的请求 / 结果（仅主进程侧使用，不进 IPC）。 */
 export interface VisionAnalyzeRequest {
   imageId: string;
@@ -358,6 +387,9 @@ export const IPC = {
   getAnalytics: "desktop:get-analytics",
   openAnalytics: "desktop:open-analytics",
   getRecentErrors: "desktop:get-recent-errors",
+  getImageSettings: "desktop:get-image-settings",
+  setImageSettings: "desktop:set-image-settings",
+  pickImageDirectory: "desktop:pick-image-directory",
 } as const;
 
 export interface OpenWorkspaceRequest {
@@ -484,5 +516,9 @@ export interface DesktopApi {
   getRecentErrors(withinMs: number): Promise<
     Array<{ ts: string; type: string; message: string }>
   >;
+  getImageSettings(): Promise<ImageSettings>;
+  setImageSettings(settings: ImageSettings): Promise<ImageSettings>;
+  /** 弹系统目录选择器选择生图存盘目录；取消返回 null */
+  pickImageDirectory(): Promise<string | null>;
   onWorkbenchNavigate(listener: (view: string) => void): () => void;
 }

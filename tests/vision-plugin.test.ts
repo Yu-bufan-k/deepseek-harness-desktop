@@ -93,9 +93,13 @@ describe("desktop-vision 插件", () => {
     );
   });
 
-  it("环境变量就绪时注册 vision_understand", () => {
+  it("环境变量就绪时注册 vision_understand / generate_image / design_review", () => {
     const { definitions, warn } = install({});
-    expect([...definitions.keys()]).toEqual(["vision_understand"]);
+    expect([...definitions.keys()]).toEqual([
+      "vision_understand",
+      "generate_image",
+      "design_review",
+    ]);
     expect(warn).not.toHaveBeenCalled();
     const parameters = definitions.get("vision_understand")!.parameters as {
       required: string[];

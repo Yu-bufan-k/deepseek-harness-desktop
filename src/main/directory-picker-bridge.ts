@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type {
+  GeneratedImageSelection,
   VisionAnalyzeRequest,
   VisionAnalyzeResult,
 } from "../shared/contracts.js";
@@ -23,6 +24,20 @@ export interface VisionBridgeConfig {
 export interface VisionBridgeHandlers {
   getConfig(): Promise<VisionBridgeConfig>;
   analyze(request: VisionAnalyzeRequest): Promise<VisionAnalyzeResult>;
+}
+
+export interface DesignBridgeHandlers {
+  /** 生图：生成 variants 个方案并弹选择器，返回全部方案与选中的一张。 */
+  generateImage(request: {
+    prompt: string;
+    size?: string;
+    variants?: number;
+    backendId?: string;
+  }): Promise<GeneratedImageSelection>;
+  /** 设计评审：离屏渲染 HTML → 截图 → 视觉模型解析。 */
+  reviewDesign(request: { html: string; question?: string }): Promise<{
+    text: string;
+  }>;
 }
 
 function authorized(header: string | undefined, token: string): boolean {
@@ -69,6 +84,7 @@ export class DirectoryPickerBridge {
   constructor(
     private readonly pickDirectory: PickDirectory,
     private readonly vision: VisionBridgeHandlers | null = null,
+    private readonly design: DesignBridgeHandlers | null = null,
   ) {}
 
   async start(): Promise<DirectoryPickerBridgeInfo> {
@@ -131,6 +147,52 @@ export class DirectoryPickerBridge {
             : {}),
         };
         return send(response, 200, await this.vision.analyze(analyzeRequest));
+      }
+      if (url === "/image/generate" && request.method === "POST") {
+        if (!granted) return send(response, 401, { error: "unauthorized" });
+        if (!this.design) return send(response, 404, { error: "not found" });
+        const parsed = (await readJsonBody(request)) as Record<string, unknown>;
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          typeof parsed.prompt !== "string" ||
+          parsed.prompt.length === 0 ||
+          parsed.prompt.length > 4_000
+        )
+          return send(response, 400, { error: "invalid image generate request" });
+        return send(response, 200, await this.design.generateImage({
+          prompt: parsed.prompt,
+          ...(typeof parsed.size === "string" && /^\d{3,4}x\d{3,4}$/.test(parsed.size)
+            ? { size: parsed.size }
+            : {}),
+          ...(typeof parsed.variants === "number" &&
+          parsed.variants >= 1 &&
+          parsed.variants <= 6
+            ? { variants: parsed.variants }
+            : {}),
+          ...(typeof parsed.backendId === "string" && parsed.backendId.length > 0
+            ? { backendId: parsed.backendId }
+            : {}),
+        }));
+      }
+      if (url === "/design/review" && request.method === "POST") {
+        if (!granted) return send(response, 401, { error: "unauthorized" });
+        if (!this.design) return send(response, 404, { error: "not found" });
+        const parsed = (await readJsonBody(request)) as Record<string, unknown>;
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          typeof parsed.html !== "string" ||
+          parsed.html.length === 0 ||
+          parsed.html.length > 300_000
+        )
+          return send(response, 400, { error: "invalid design review request" });
+        return send(response, 200, await this.design.reviewDesign({
+          html: parsed.html,
+          ...(typeof parsed.question === "string" && parsed.question.length > 0
+            ? { question: parsed.question }
+            : {}),
+        }));
       }
       return send(response, 404, { error: "not found" });
     } catch (error) {

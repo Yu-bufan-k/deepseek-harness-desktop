@@ -1,6 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { UpdateChannel, VisionSettings } from "../shared/contracts.js";
+import type {
+  ImageSettings,
+  UpdateChannel,
+  VisionSettings,
+} from "../shared/contracts.js";
 import type { BillingSettings } from "../shared/billing.js";
 import type { QuotaSettings } from "../shared/quota.js";
 
@@ -15,6 +19,7 @@ export interface DesktopSettings {
   eventLogDirectory?: string | null;
   billing?: BillingSettings;
   vision?: VisionSettings;
+  image?: ImageSettings;
   quota?: QuotaSettings;
 }
 

@@ -31,6 +31,11 @@ import {
 import { EventLog } from "./event-log.js";
 import { AnalyticsService } from "./analytics.js";
 import {
+  ImageGenerationService,
+  pickGeneratedImage,
+  renderHtmlToDataUrl,
+} from "./image-generation.js";
+import {
   billingSettingsSnapshot,
   BillingUsageSummarizer,
   decimalBillingAmountToNanos,
@@ -98,6 +103,7 @@ let harness: HarnessManager;
 let settings: SettingsStore;
 let eventLog: EventLog;
 let analytics: AnalyticsService;
+let imageGeneration: ImageGenerationService;
 let credentials: CredentialStore;
 let deepSeekBalance: DeepSeekBalanceService;
 let changeSets: ChangeSetService;
@@ -227,20 +233,34 @@ async function saveVisionImageFile(
   }
   return { imageId, mimeType };
 }
-async function resolveVisionImageFile(imageId: string, directory: string): Promise<{
+async function resolveVisionImageFile(
+  imageId: string,
+  directory: string,
+  fallbackDirectory?: string,
+): Promise<{
   dataUrl: string;
   mimeType: string;
 }> {
   if (!/^[a-f0-9]{64}$/i.test(imageId)) throw new Error("无效的图片 ID");
-  const entries = await readdir(directory);
-  const entry = entries.find((name) => name.startsWith(`${imageId}.`));
-  if (!entry) throw new Error("图片不存在或已被清理");
-  const mimeType = visionMimeForExtension(entry.split(".").pop() ?? "");
-  const buffer = await readFile(path.join(directory, entry));
-  return {
-    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
-    mimeType,
-  };
+  // 先查主目录（视觉存盘目录），再查生图目录（agent 可用 vision_understand
+  // 查看 generate_image 生成的图片）
+  for (const dir of [directory, fallbackDirectory]) {
+    if (!dir) continue;
+    try {
+      const entries = await readdir(dir);
+      const entry = entries.find((name) => name.startsWith(`${imageId}.`));
+      if (!entry) continue;
+      const mimeType = visionMimeForExtension(entry.split(".").pop() ?? "");
+      const buffer = await readFile(path.join(dir, entry));
+      return {
+        dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+        mimeType,
+      };
+    } catch {
+      // 目录不存在等错误，尝试下一个
+    }
+  }
+  throw new Error("图片不存在或已被清理");
 }
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -1584,6 +1604,19 @@ function registerIpc(): void {
       typeof withinMs === "number" && withinMs > 0 ? withinMs : 60_000,
     ),
   );
+  handle(IPC.getImageSettings, () => imageGeneration.getSettings());
+  handle(IPC.setImageSettings, (_event, value: unknown) =>
+    imageGeneration.setSettings(value as never),
+  );
+  handle(IPC.pickImageDirectory, async () => {
+    const picked = await showDirectoryPicker();
+    if (picked)
+      await imageGeneration.setSettings({
+        ...imageGeneration.getSettings(),
+        imageDirectory: picked,
+      });
+    return picked;
+  });
   handle(IPC.resetEventLogDirectory, async () => {
     await settings.patch({ eventLogDirectory: null });
     eventLog = new EventLog({
@@ -1744,6 +1777,12 @@ void app.whenReady().then(async () => {
   credentials = new CredentialStore(userData);
   memoryStore = new MemoryStore(userData);
   changeSets = new ChangeSetService(userData);
+  // 注意：imageGeneration 依赖 credentials，必须在其初始化之后创建
+  imageGeneration = new ImageGenerationService(
+    settings,
+    credentials,
+    path.join(userData, "images"),
+  );
   vision = new VisionService(settings, credentials, userData);
   deepSeekBalance = new DeepSeekBalanceService({
     credential: async () =>
@@ -1779,6 +1818,7 @@ void app.whenReady().then(async () => {
         const image = await resolveVisionImageFile(
           request.imageId,
           visionImagesDirectory(settings),
+          imageGeneration.imagesDirectoryPath(),
         );
         const result = await vision.analyze({
           requestId: randomUUID(),
@@ -1810,6 +1850,69 @@ void app.whenReady().then(async () => {
           imageId: request.imageId,
           backendName: backendName ?? null,
           durationMs: Date.now() - startedAt,
+          message: cause instanceof Error ? cause.message : String(cause),
+        });
+        throw cause;
+      }
+    },
+  }, {
+    generateImage: async (request) => {
+      const startedAt = Date.now();
+      try {
+        const variants = request.variants ?? 3;
+        const { images, failures } = await imageGeneration.generate(
+          request.prompt,
+          request.size ?? "1024x1024",
+          variants,
+          request.backendId,
+        );
+        // 所有生图统一走预览/选择窗口（1 张 = 确认，多张 = 选择）；
+        // 关闭/超时/取消 = 放弃（selected 为 null）。不再自动打开系统查看器。
+        const selectedIndex = await pickGeneratedImage(images, request.prompt);
+        const selected =
+          selectedIndex === null ? null : (images[selectedIndex] ?? null);
+        void eventLog.append("image-generate", "request", {
+          imageId: selected?.imageId ?? null,
+          requestedVariants: variants,
+          variants: images.length,
+          failed: failures.length,
+          failureReason: failures[0] ?? null,
+          selectedIndex,
+          size: request.size ?? "1024x1024",
+          durationMs: Date.now() - startedAt,
+          ok: true,
+        });
+        return { images, selected };
+      } catch (cause) {
+        void eventLog.append("error", "image-generate", {
+          message: cause instanceof Error ? cause.message : String(cause),
+          durationMs: Date.now() - startedAt,
+        });
+        throw cause;
+      }
+    },
+    reviewDesign: async (request) => {
+      const startedAt = Date.now();
+      try {
+        const dataUrl = await renderHtmlToDataUrl(request.html);
+        const settings = vision.getSettings();
+        const result = await vision.analyze({
+          requestId: randomUUID(),
+          backendId: settings.defaultBackendId ?? undefined,
+          question:
+            request.question ??
+            "请从视觉设计角度评审这个页面：布局、对齐、配色、间距、信息层级、可读性，指出问题并给出改进建议。",
+          imageDataUrl: dataUrl,
+          mimeType: "image/png",
+        });
+        void eventLog.append("design-review", "request", {
+          durationMs: Date.now() - startedAt,
+          backendName: result.backendName,
+          cached: result.cached,
+        });
+        return { text: result.text };
+      } catch (cause) {
+        void eventLog.append("error", "design-review", {
           message: cause instanceof Error ? cause.message : String(cause),
         });
         throw cause;

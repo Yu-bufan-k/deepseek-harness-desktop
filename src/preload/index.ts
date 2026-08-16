@@ -187,6 +187,10 @@ const api: DesktopApi = {
   openAnalytics: () => ipcRenderer.invoke(IPC.openAnalytics),
   getRecentErrors: (withinMs) =>
     ipcRenderer.invoke(IPC.getRecentErrors, withinMs),
+  getImageSettings: () => ipcRenderer.invoke(IPC.getImageSettings),
+  setImageSettings: (settings) =>
+    ipcRenderer.invoke(IPC.setImageSettings, settings),
+  pickImageDirectory: () => ipcRenderer.invoke(IPC.pickImageDirectory),
   onWorkbenchNavigate: (listener: (view: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, view: string) =>
       listener(view);

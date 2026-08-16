@@ -576,6 +576,116 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
               error && h("p", { className: "dsh-vision-error" }, error)),
         busy && h("p", { className: "dsh-vision-hint" }, "正在保存…"));
     }
+    function ImageCard() {
+      const h = React.createElement;
+      const [settings, setSettings] = React.useState(null);
+      const [busy, setBusy] = React.useState(false);
+      const [error, setError] = React.useState("");
+      const [formKind, setFormKind] = React.useState("");
+      const [draft, setDraft] = React.useState(null);
+      const [apiKey, setApiKey] = React.useState("");
+      React.useEffect(() => {
+        let alive = true;
+        window.desktop?.getImageSettings?.().then((value) => { if (alive) setSettings(value); }).catch(() => {});
+        return () => { alive = false; };
+      }, []);
+      const save = async (next) => {
+        setBusy(true); setError("");
+        try { setSettings(await window.desktop.setImageSettings(next)); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+        finally { setBusy(false); }
+      };
+      const cancelForm = () => { setFormKind(""); setDraft(null); };
+      // 免费方案：智谱 CogView3-Flash（同视觉免费方案的 ZHIPU_API_KEY，永久免费）
+      const startFree = () => {
+        setFormKind("direct"); setApiKey("");
+        setDraft({ freePreset: "cogview", name: "智谱 CogView3-Flash（免费）", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "cogview-3-flash", credentialName: "ZHIPU_API_KEY" });
+      };
+      const startDirect = (backend) => {
+        setFormKind("direct"); setApiKey("");
+        if (backend) { setDraft({ id: backend.id, name: backend.name, baseUrl: backend.baseUrl, model: backend.model, credentialName: backend.credentialName }); return; }
+        setDraft({ name: "生图服务", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "cogview-3-flash", credentialName: "IMAGE_API_KEY" });
+      };
+      const commit = async () => {
+        if (!draft || !draft.name.trim()) { setError("请填写服务名称"); return; }
+        setBusy(true); setError("");
+        try {
+          const key = apiKey.trim();
+          if (key) await window.desktop.setCredential(draft.credentialName.trim(), key);
+          const config = { id: draft.id ?? crypto.randomUUID(), name: draft.name.trim(), enabled: true, model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), credentialName: draft.credentialName.trim() };
+          const next = draft.id
+            ? { ...settings, backends: settings.backends.map((backend) => backend.id === draft.id ? { ...config, enabled: backend.enabled } : backend) }
+            : { ...settings, backends: settings.backends.map((backend) => ({ ...backend, enabled: false })).concat([config]), defaultBackendId: config.id };
+          const saved = await window.desktop.setImageSettings(next);
+          setSettings(saved); cancelForm(); setApiKey("");
+        } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+        finally { setBusy(false); }
+      };
+      const removeBackend = (id) => {
+        const backends = settings.backends.filter((backend) => backend.id !== id);
+        const defaultBackendId = settings.defaultBackendId === id ? null : settings.defaultBackendId;
+        void save({ backends, defaultBackendId });
+      };
+      if (!settings) return h("p", { className: "dsh-vision-hint" }, "正在加载生图设置…");
+      const chooseDir = async () => {
+        try {
+          const picked = await window.desktop.pickImageDirectory();
+          if (picked) {
+            setSettings({ ...settings, imageDirectory: picked });
+            desktopNotify("生图目录已更新", "success");
+          }
+        } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+      };
+      const resetDir = () => void save({ ...settings, imageDirectory: null });
+      const setField = (key) => (event) => setDraft((value) => ({ ...value, [key]: event.target.value }));
+      const input = (value, onChange, props) => h("input", Object.assign({ type: "text", value, onChange: (event) => onChange(event.target.value) }, props || {}));
+      const field = (label, control) => h("label", { className: "dsh-vision-field" }, h("span", null, label), control);
+      return h("div", { className: "dsh-vision-card" },
+        h("div", { className: "dsh-vision-toggle" },
+          h("div", { className: "dsh-vision-toggle-text" },
+            h("strong", null, "生图服务"),
+            h("small", null, "agent 用 generate_image 工具按描述生成图片；免费方案为智谱 CogView3-Flash（同视觉免费方案的 API Key，永久免费）。")),
+          null),
+        h("div", { className: "dsh-vision-body" },
+          settings.backends.length > 0 && h("div", { className: "dsh-vision-list" },
+            settings.backends.map((backend) =>
+              h("div", { key: backend.id, className: "dsh-vision-backend" + (backend.enabled ? "" : " is-disabled") },
+                h("div", { className: "dsh-vision-backend-main" }, h("strong", null, backend.name), h("span", null, backend.model)),
+                h("div", { className: "dsh-vision-backend-meta" },
+                  backend.enabled && h("span", { className: "dsh-vision-tag" }, "默认"),
+                  !backend.enabled && h("span", { className: "dsh-vision-tag" }, "已停用"),
+                  h("button", { type: "button", className: "dsh-vision-link", onClick: () => startDirect(backend) }, "编辑"),
+                  h("label", { className: "dsh-vision-check", title: "勾选启用该服务并设为默认" }, h("input", { type: "checkbox", checked: backend.enabled, onChange: (event) => {
+                    if (event.target.checked) {
+                      void save({ backends: settings.backends.map((item) => item.id === backend.id ? { ...item, enabled: true } : { ...item, enabled: false }), defaultBackendId: backend.id });
+                    } else {
+                      void save({ backends: settings.backends.map((item) => item.id === backend.id ? { ...item, enabled: false } : item), defaultBackendId: null });
+                    }
+                  } }), "使用"),
+                  h("button", { type: "button", className: "dsh-vision-link dsh-vision-danger", onClick: () => removeBackend(backend.id) }, "删除"))))),
+          formKind === "direct" && h("div", { className: "dsh-vision-form" },
+            draft.freePreset === "cogview" && h("p", { className: "dsh-vision-hint" }, "免费方案：CogView3-Flash 永久免费，使用视觉免费方案同一个 ZHIPU_API_KEY，无需额外注册。注意：免费模型生成的图片可能带「AI 生成」水印，可在 bigmodel.cn 控制台的安全管理中关闭；要彻底无水印可改用付费模型（如 cogview-4）。"),
+            field("名称", input(draft.name, setField("name"))),
+            field("Base URL", input(draft.baseUrl, setField("baseUrl"))),
+            field("模型", input(draft.model, setField("model"))),
+            field("凭据名", input(draft.credentialName, setField("credentialName"))),
+            field("API Key", h("input", { type: "password", value: apiKey, onChange: (event) => setApiKey(event.target.value), placeholder: "仅写入加密凭据库，不落配置" })),
+            h("div", { className: "dsh-vision-form-actions" },
+              h("button", { type: "button", className: "dsh-vision-save", disabled: busy, onClick: () => void commit() }, draft.id ? "保存" : "添加"),
+              h("button", { type: "button", className: "dsh-vision-link", onClick: cancelForm }, "取消"))),
+          h("div", { className: "dsh-vision-actions" },
+            h("button", { type: "button", className: "dsh-vision-add", onClick: () => void startFree() }, "+ 免费方案（智谱 CogView3）"),
+            h("button", { type: "button", className: "dsh-vision-add", onClick: () => void startDirect() }, "+ Direct API")),
+          h("div", { className: "dsh-vision-row" },
+            h("span", { className: "dsh-vision-label" }, "图片存放目录"),
+            h("p", { className: "dsh-vision-test" }, settings.imageDirectory || "默认（用户数据目录/images）"),
+            h("div", { className: "dsh-vision-actions" },
+              h("button", { type: "button", className: "dsh-vision-add", onClick: () => void chooseDir() }, "选择目录"),
+              settings.imageDirectory && h("button", { type: "button", className: "dsh-vision-add", onClick: () => void resetDir() }, "恢复默认"))),
+          h("p", { className: "dsh-vision-hint" }, "提示：生图时图片描述（prompt）会发送到所配置的服务。"),
+          error && h("p", { className: "dsh-vision-error" }, error)),
+        busy && h("p", { className: "dsh-vision-hint" }, "正在保存…"));
+    }
     function LogCard() {
       const h = React.createElement;
       const [directory, setDirectory] = React.useState(null);
@@ -1004,6 +1114,56 @@ const CLIENT_PLUGIN_SOURCE = `window.__ModuleLoader__.load({
         decorate();
         return () => observer.disconnect();
       }, 'desktop vision settings nav decoration');
+      ctx.slots.inject("settings.section", () => ctx.slots.register({
+        name: "settings.section", id: "desktop-image", order: 93,
+        label: () => "生图"
+      }, ImageCard));
+      ctx.effect(() => {
+        // 与记忆/视觉/日志卡同款：把「生图」导航项的 svg 换成画笔图标，按 path d 幂等。
+        const PEN = "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z";
+        const LINE = "M15 5l4 4";
+        const decorate = () => {
+          const dialogs = document.querySelectorAll('[role="dialog"]');
+          for (const dialog of dialogs) {
+            const navs = dialog.querySelectorAll('nav');
+            for (const nav of navs) {
+              const buttons = nav.querySelectorAll('button');
+              for (const btn of buttons) {
+                const spans = btn.querySelectorAll('span');
+                const label = spans[spans.length - 1];
+                if (!label || label.textContent !== '生图') continue;
+                const icon = btn.firstElementChild;
+                const svg = icon && icon.tagName === 'svg' ? icon : (icon && icon.querySelector('svg'));
+                if (!svg) continue;
+                const existing = svg.querySelector('path');
+                if (existing && existing.getAttribute('d') === PEN) continue;
+                btn.dataset.dshImageNav = '1';
+                while (svg.firstChild) svg.removeChild(svg.firstChild);
+                svg.setAttribute('viewBox', '0 0 24 24');
+                svg.setAttribute('fill', 'none');
+                svg.setAttribute('stroke', 'currentColor');
+                svg.setAttribute('stroke-width', '2');
+                svg.setAttribute('stroke-linecap', 'round');
+                svg.setAttribute('stroke-linejoin', 'round');
+                const NS = "http://www.w3.org/2000/svg";
+                for (const d of [PEN, LINE]) {
+                  const p = document.createElementNS(NS, "path");
+                  p.setAttribute("d", d);
+                  svg.appendChild(p);
+                }
+                btn.style.fontFamily = 'inherit';
+                btn.style.fontSize = '14px';
+                btn.style.fontWeight = '400';
+                btn.style.lineHeight = '22px';
+              }
+            }
+          }
+        };
+        const observer = new MutationObserver(decorate);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        decorate();
+        return () => observer.disconnect();
+      }, 'desktop image settings nav decoration');
       ctx.slots.inject("settings.section", () => ctx.slots.register({
         name: "settings.section", id: "desktop-event-log", order: 92,
         label: () => "日志"
