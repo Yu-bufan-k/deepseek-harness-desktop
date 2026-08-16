@@ -9,7 +9,6 @@ import {
   type ThemePreference,
   type UpdateChannel,
   type VisionBackendConfig,
-  type VisionRequest,
   type VisionSettings,
   type ChangeBatch,
 } from "../shared/contracts.js";
@@ -19,6 +18,8 @@ import type {
   BillingUsageReport,
   BillingUsageSync,
 } from "../shared/billing.js";
+import type { QuotaSettings, QuotaSnapshot } from "../shared/quota.js";
+import type { MemoryEntry } from "../shared/memory.js";
 
 ipcRenderer.on(IPC.openWorkspace, (_event, request: OpenWorkspaceRequest) => {
   window.postMessage(
@@ -111,6 +112,29 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC.billingChanged, handler);
     return () => ipcRenderer.removeListener(IPC.billingChanged, handler);
   },
+  getQuotaUsage: () => ipcRenderer.invoke(IPC.getQuotaUsage),
+  refreshQuotaUsage: () => ipcRenderer.invoke(IPC.refreshQuotaUsage),
+  onQuotaUsageChanged: (
+    listener: (snapshot: QuotaSnapshot) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: QuotaSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(IPC.quotaChanged, handler);
+    return () => ipcRenderer.removeListener(IPC.quotaChanged, handler);
+  },
+  getQuotaSettings: () => ipcRenderer.invoke(IPC.getQuotaSettings),
+  setQuotaSettings: (settings: QuotaSettings) =>
+    ipcRenderer.invoke(IPC.setQuotaSettings, settings),
+  getMemoryEntries: (): Promise<MemoryEntry[]> =>
+    ipcRenderer.invoke(IPC.getMemoryEntries),
+  deleteMemoryEntry: (id: string): Promise<MemoryEntry[]> =>
+    ipcRenderer.invoke(IPC.deleteMemoryEntry, id),
+  getMemoryToolsEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.getMemoryToolsEnabled),
+  setMemoryToolsEnabled: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.setMemoryToolsEnabled, enabled),
   onSplashReady: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on(IPC.splashReady, handler);
@@ -145,18 +169,20 @@ const api: DesktopApi = {
   getVisionSettings: () => ipcRenderer.invoke(IPC.getVisionSettings),
   setVisionSettings: (value: VisionSettings) =>
     ipcRenderer.invoke(IPC.setVisionSettings, value),
-  discoverVisionTools: (backend: VisionBackendConfig) =>
-    ipcRenderer.invoke(IPC.discoverVisionTools, backend),
   testVisionBackend: (backend: VisionBackendConfig) =>
     ipcRenderer.invoke(IPC.testVisionBackend, backend),
-  analyzeVision: (request: VisionRequest) =>
-    ipcRenderer.invoke(IPC.analyzeVision, request),
-  cancelVision: (requestId: string) =>
-    ipcRenderer.invoke(IPC.cancelVision, requestId),
-  getCachedVision: (request: VisionRequest) =>
-    ipcRenderer.invoke(IPC.getCachedVision, request),
-  listVisionAttachments: (sessionId?: string) =>
-    ipcRenderer.invoke(IPC.listVisionAttachments, sessionId),
+  saveVisionImage: (dataUrl: string) =>
+    ipcRenderer.invoke(IPC.saveVisionImage, dataUrl),
+  pickVisionImageDirectory: () =>
+    ipcRenderer.invoke(IPC.pickVisionImageDirectory),
+  clearVisionImages: () => ipcRenderer.invoke(IPC.clearVisionImages),
+  appendEventLog: (entry) => ipcRenderer.invoke(IPC.appendEventLog, entry),
+  openLogDirectory: () => ipcRenderer.invoke(IPC.openLogDirectory),
+  pickEventLogDirectory: () =>
+    ipcRenderer.invoke(IPC.pickEventLogDirectory),
+  getEventLogDirectory: () => ipcRenderer.invoke(IPC.getEventLogDirectory),
+  resetEventLogDirectory: () =>
+    ipcRenderer.invoke(IPC.resetEventLogDirectory),
   onWorkbenchNavigate: (listener: (view: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, view: string) =>
       listener(view);

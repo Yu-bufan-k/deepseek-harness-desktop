@@ -5,6 +5,8 @@ import type {
   BillingUsageReport,
   BillingUsageSync,
 } from "./billing.js";
+import type { QuotaSettings, QuotaSnapshot } from "./quota.js";
+import type { MemoryEntry } from "./memory.js";
 
 export type HarnessStatus =
   "starting" | "ready" | "stopping" | "stopped" | "failed";
@@ -126,7 +128,6 @@ export interface FileDiff {
 }
 
 export type VisionPolicy = "auto" | "always" | "off";
-export type VisionImageEncoding = "data-url" | "base64" | "path";
 
 interface VisionBackendBase {
   id: string;
@@ -140,52 +141,28 @@ export interface DirectVisionBackendConfig extends VisionBackendBase {
   kind: "direct";
   baseUrl: string;
   credentialName: string;
-  headers: Record<string, string>;
-  headerCredentialNames: Record<string, string>;
 }
 
-export interface McpVisionArgumentMapping {
-  imageArgument: string;
-  imageEncoding: VisionImageEncoding;
-  questionArgument: string | null;
-  mimeTypeArgument: string | null;
-  resultTextPath: string | null;
-}
-
-export interface McpStdioVisionBackendConfig extends VisionBackendBase {
+export interface McpVisionBackendConfig extends VisionBackendBase {
   kind: "mcp";
-  transport: "stdio";
   command: string;
   args: string[];
   cwd: string;
-  env: Record<string, string>;
-  envCredentialNames: Record<string, string>;
-  allowLocalPath: boolean;
   toolName: string;
-  mapping: McpVisionArgumentMapping;
-}
-
-export interface McpHttpVisionBackendConfig extends VisionBackendBase {
-  kind: "mcp";
-  transport: "streamable-http";
-  url: string;
-  headers: Record<string, string>;
-  headerCredentialNames: Record<string, string>;
-  toolName: string;
-  mapping: McpVisionArgumentMapping;
+  imageArgument: string;
+  questionArgument: string;
 }
 
 export type VisionBackendConfig =
   | DirectVisionBackendConfig
-  | McpStdioVisionBackendConfig
-  | McpHttpVisionBackendConfig;
-export type McpVisionBackendConfig =
-  McpStdioVisionBackendConfig | McpHttpVisionBackendConfig;
+  | McpVisionBackendConfig;
 
 export interface VisionSettings {
   policy: VisionPolicy;
   defaultBackendId: string | null;
   remoteDisclosureAccepted: boolean;
+  /** 图片存盘目录；null = 默认 userData/vision */
+  imageDirectory: string | null;
   backends: VisionBackendConfig[];
 }
 
@@ -195,6 +172,28 @@ export interface VisionToolDescriptor {
   inputSchema: Record<string, unknown>;
 }
 
+/** 图片存盘后返回给侧边栏的标识；imageId 即 sha256，文件在 userData/vision/<imageId>.<ext>。 */
+export interface SavedVisionImage {
+  imageId: string;
+  mimeType: string;
+}
+
+/** 视觉工具经桥调用主进程 VisionService 的请求 / 结果（仅主进程侧使用，不进 IPC）。 */
+export interface VisionAnalyzeRequest {
+  imageId: string;
+  question: string;
+  backendId?: string;
+}
+
+export interface VisionAnalyzeResult {
+  text: string;
+  backendName: string;
+  model: string;
+  cached: boolean;
+  durationMs: number;
+}
+
+// VisionService 内部使用的请求/结果类型（analyze 直接调用，不再经 IPC 暴露）。
 export interface VisionRequest {
   requestId: string;
   sessionId?: string;
@@ -222,19 +221,6 @@ export interface VisionResult {
   durationMs: number;
   createdAt: string;
   usage: VisionUsage;
-}
-
-export interface DesktopAttachmentRecord {
-  id: string;
-  sessionId: string | null;
-  requestId: string;
-  mimeType: string;
-  imageHash: string;
-  backendId: string | null;
-  status: "pending" | "analyzing" | "ready" | "failed";
-  visionText: string | null;
-  errorSummary: string | null;
-  createdAt: string;
 }
 
 export interface DesktopInfo {
@@ -284,6 +270,15 @@ export const IPC = {
   getBillingUsage: "desktop:get-billing-usage",
   billingUsageChanged: "desktop:billing-usage-changed",
   billingEditRequested: "desktop:billing-edit-requested",
+  getQuotaUsage: "desktop:get-quota-usage",
+  refreshQuotaUsage: "desktop:refresh-quota-usage",
+  quotaChanged: "desktop:quota-changed",
+  getQuotaSettings: "desktop:get-quota-settings",
+  setQuotaSettings: "desktop:set-quota-settings",
+  getMemoryEntries: "desktop:get-memory-entries",
+  deleteMemoryEntry: "desktop:delete-memory-entry",
+  getMemoryToolsEnabled: "desktop:get-memory-tools-enabled",
+  setMemoryToolsEnabled: "desktop:set-memory-tools-enabled",
   infoChanged: "desktop:info-changed",
   harnessIntegrationReady: "desktop:harness-integration-ready",
   openWorkspace: "desktop:open-workspace",
@@ -299,12 +294,15 @@ export const IPC = {
   changeBatchesChanged: "desktop:change-batches-changed",
   getVisionSettings: "desktop:get-vision-settings",
   setVisionSettings: "desktop:set-vision-settings",
-  discoverVisionTools: "desktop:discover-vision-tools",
   testVisionBackend: "desktop:test-vision-backend",
-  analyzeVision: "desktop:analyze-vision",
-  cancelVision: "desktop:cancel-vision",
-  getCachedVision: "desktop:get-cached-vision",
-  listVisionAttachments: "desktop:list-vision-attachments",
+  saveVisionImage: "desktop:save-vision-image",
+  pickVisionImageDirectory: "desktop:pick-vision-image-directory",
+  clearVisionImages: "desktop:clear-vision-images",
+  appendEventLog: "desktop:append-event-log",
+  openLogDirectory: "desktop:open-log-directory",
+  pickEventLogDirectory: "desktop:pick-event-log-directory",
+  getEventLogDirectory: "desktop:get-event-log-directory",
+  resetEventLogDirectory: "desktop:reset-event-log-directory",
 } as const;
 
 export interface OpenWorkspaceRequest {
@@ -327,7 +325,7 @@ export interface DesktopApi {
   openSettings(): Promise<void>;
   openBilling(target?: BillingModelTarget): Promise<void>;
   openLegacyBilling(target?: BillingModelTarget): Promise<void>;
-  openWorkbench(view?: "changes" | "vision"): Promise<void>;
+  openWorkbench(view?: "changes"): Promise<void>;
   checkUpdate(): Promise<UpdateState>;
   checkHarnessUpdate(): Promise<HarnessUpdateState>;
   downloadUpdate(): Promise<UpdateState>;
@@ -364,6 +362,17 @@ export interface DesktopApi {
   onBillingChanged(
     listener: (settings: BillingSettingsSnapshot) => void,
   ): () => void;
+  getQuotaUsage(): Promise<QuotaSnapshot>;
+  refreshQuotaUsage(): Promise<QuotaSnapshot>;
+  onQuotaUsageChanged(
+    listener: (snapshot: QuotaSnapshot) => void,
+  ): () => void;
+  getQuotaSettings(): Promise<QuotaSettings>;
+  setQuotaSettings(settings: QuotaSettings): Promise<QuotaSettings>;
+  getMemoryEntries(): Promise<MemoryEntry[]>;
+  deleteMemoryEntry(id: string): Promise<MemoryEntry[]>;
+  getMemoryToolsEnabled(): Promise<boolean>;
+  setMemoryToolsEnabled(enabled: boolean): Promise<boolean>;
   onInfoChanged(listener: (info: DesktopInfo) => void): () => void;
   onSplashReady(listener: () => void): () => void;
   setActiveWorkspaceContext(
@@ -390,15 +399,27 @@ export interface DesktopApi {
   ): () => void;
   getVisionSettings(): Promise<VisionSettings>;
   setVisionSettings(settings: VisionSettings): Promise<VisionSettings>;
-  discoverVisionTools(
-    backend: VisionBackendConfig,
-  ): Promise<VisionToolDescriptor[]>;
   testVisionBackend(
     backend: VisionBackendConfig,
   ): Promise<{ ok: true; tools?: VisionToolDescriptor[] }>;
-  analyzeVision(request: VisionRequest): Promise<VisionResult>;
-  cancelVision(requestId: string): Promise<void>;
-  getCachedVision(request: VisionRequest): Promise<VisionResult | null>;
-  listVisionAttachments(sessionId?: string): Promise<DesktopAttachmentRecord[]>;
+  saveVisionImage(dataUrl: string): Promise<SavedVisionImage>;
+  /** 弹系统目录选择器；返回选择的目录，取消返回 null */
+  pickVisionImageDirectory(): Promise<string | null>;
+  /** 清空图片存盘目录里的文件，返回删除数量 */
+  clearVisionImages(): Promise<number>;
+  /** 上报一条事件日志（sidecar 用户操作等） */
+  appendEventLog(entry: {
+    area: string;
+    type: string;
+    [key: string]: unknown;
+  }): Promise<void>;
+  /** 打开事件日志目录（系统文件管理器） */
+  openLogDirectory(): Promise<void>;
+  /** 弹系统目录选择器选择日志目录（选中即保存）；取消返回 null */
+  pickEventLogDirectory(): Promise<string | null>;
+  /** 当前自定义日志目录；null = 默认 userData/logs */
+  getEventLogDirectory(): Promise<string | null>;
+  /** 恢复默认日志目录 */
+  resetEventLogDirectory(): Promise<void>;
   onWorkbenchNavigate(listener: (view: string) => void): () => void;
 }

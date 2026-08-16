@@ -12,11 +12,14 @@ import type {
   ChangeBatch,
   DesktopInfo,
   FileDiff,
-  McpVisionBackendConfig,
-  VisionBackendConfig,
-  VisionResult,
-  VisionSettings,
 } from "../shared/contracts.js";
+import type {
+  QuotaPlan,
+  QuotaSettings,
+  QuotaSnapshot,
+  QuotaWindow,
+} from "../shared/quota.js";
+import { DEFAULT_QUOTA_SETTINGS } from "../shared/quota.js";
 import type { EChartsType } from "echarts/core";
 import { editor } from "./monaco.js";
 import {
@@ -26,6 +29,7 @@ import {
   dayStart,
   HOUR_MS,
   modelLabel,
+  providerOptions,
   rangeBounds,
   rollupSeries,
   sumModelTokens,
@@ -36,18 +40,9 @@ import {
 } from "./usage-series.js";
 import "./styles.css";
 
-type View = "changes" | "billing" | "vision" | "settings";
-const WORKBENCH_VIEWS = new Set<View>(["changes", "vision"]);
+type View = "changes" | "billing" | "settings";
+const WORKBENCH_VIEWS = new Set<View>(["changes"]);
 const POPUP_VIEWS = new Set<View>(["billing", "settings"]);
-const NAV_VIEWS: Array<{
-  id: "changes" | "vision";
-  label: string;
-  glyph: string;
-}> = [
-  { id: "changes", label: "变更", glyph: "±" },
-  { id: "vision", label: "视觉", glyph: "◎" },
-];
-
 const RANGE_PRESETS: Array<{ key: RangeKey; label: string }> = [
   { key: "today", label: "今日" },
   { key: "7d", label: "近7天" },
@@ -576,18 +571,21 @@ function ChangesView({
             {diff?.path ?? "选择一个文件查看变更"}
           </span>
           <div className="toolbar-actions">
-            <button
-              className={inline ? "" : "active"}
-              onClick={() => setInline(false)}
-            >
-              并排
-            </button>
-            <button
-              className={inline ? "active" : ""}
-              onClick={() => setInline(true)}
-            >
-              行内
-            </button>
+            <div className="segmented" data-inline={inline ? "1" : "0"}>
+              <button
+                className={inline ? "" : "active"}
+                onClick={() => setInline(false)}
+              >
+                并排
+              </button>
+              <button
+                className={inline ? "active" : ""}
+                onClick={() => setInline(true)}
+              >
+                行内
+              </button>
+              <span className="segmented-thumb" aria-hidden="true" />
+            </div>
             <label>
               <input
                 type="checkbox"
@@ -709,6 +707,205 @@ function ChangesView({
   );
 }
 
+const quotaCountdown = (resetTime: string, now = Date.now()): string => {
+  const diff = Date.parse(resetTime) - now;
+  if (diff <= 0) return "即将重置";
+  const totalSeconds = Math.floor(diff / 1000);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) return `${days}天 ${hours}小时`;
+  if (hours > 0) return `${hours}小时 ${minutes}分`;
+  if (minutes > 0) return `${minutes}分 ${seconds}秒`;
+  return `${seconds}秒`;
+};
+
+function QuotaGauge({
+  window,
+  threshold,
+  now,
+}: {
+  window: QuotaWindow;
+  threshold: number;
+  now: number;
+}) {
+  const usedPct =
+    window.limit > 0
+      ? Math.min(100, Math.round((window.used / window.limit) * 100))
+      : 0;
+  const state =
+    window.remaining <= 0
+      ? "exhausted"
+      : window.limit > 0 && window.remaining / window.limit <= threshold
+        ? "near-limit"
+        : "ok";
+  const foot =
+    window.kind === "weekly" && window.resetTime
+      ? `距重置 ${quotaCountdown(window.resetTime, now)}`
+      : window.kind === "rolling"
+        ? "滚动吞吐窗口，随请求推进自动恢复"
+        : null;
+  return (
+    <div className={`quota-gauge state-${state}`}>
+      <div className="quota-gauge-head">
+        <span className="quota-gauge-label">{window.label}</span>
+        <span className="quota-gauge-meta">
+          {window.remaining > 0
+            ? `剩 ${window.remaining} / ${window.limit} ${window.unit}`
+            : `已用尽（${window.limit} ${window.unit}）`}
+        </span>
+      </div>
+      <div
+        className="quota-gauge-bar"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={usedPct}
+        aria-label={`${window.label} 已用 ${usedPct}%`}
+      >
+        <div className="quota-gauge-fill" style={{ width: `${usedPct}%` }} />
+      </div>
+      <div className="quota-gauge-foot">{foot}</div>
+    </div>
+  );
+}
+
+function QuotaCard({
+  plan,
+  threshold,
+  now,
+}: {
+  plan: QuotaPlan;
+  threshold: number;
+  now: number;
+}) {
+  return (
+    <div className="quota-card">
+      <div className="quota-card-head">
+        <span className="quota-plan-name">{plan.planName ?? plan.provider}</span>
+        <span className="quota-provider-tag">{plan.provider}</span>
+      </div>
+      <div className="quota-card-windows">
+        {plan.windows.map((window) => (
+          <QuotaGauge
+            key={window.id}
+            window={window}
+            threshold={threshold}
+            now={now}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuotaSection() {
+  const [snapshot, setSnapshot] = useState<QuotaSnapshot | null>(null);
+  const [settings, setSettings] = useState<QuotaSettings | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const resetTriggeredRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    window.desktop.getQuotaUsage().then(setSnapshot).catch(() => {});
+    window.desktop.getQuotaSettings().then(setSettings).catch(() => {});
+    return window.desktop.onQuotaUsageChanged((value) => {
+      setSnapshot(value);
+      setSelected((current) => {
+        if (current && value.plans.some((plan) => plan.provider === current))
+          return current;
+        return value.plans[0]?.provider ?? null;
+      });
+    });
+  }, []);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const timestamp = Date.now();
+      setNow(timestamp);
+      let crossed = false;
+      for (const plan of snapshot?.plans ?? [])
+        for (const window of plan.windows) {
+          if (!window.resetTime) continue;
+          const id = `${plan.provider}:${window.id}`;
+          if (
+            Date.parse(window.resetTime) <= timestamp &&
+            !resetTriggeredRef.current.has(id)
+          ) {
+            resetTriggeredRef.current.add(id);
+            crossed = true;
+          }
+        }
+      if (crossed) void window.desktop.refreshQuotaUsage().catch(() => {});
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [snapshot]);
+  if (!snapshot) return null;
+  const threshold = settings?.warningThreshold ?? 0.2;
+  if (snapshot.plans.length) {
+    const plan =
+      snapshot.plans.find((item) => item.provider === selected) ??
+      snapshot.plans[0]!;
+    return (
+      <section className="data-section quota-section">
+        <div className="section-heading">
+          <h2>配额监控</h2>
+          <span>套餐限额，与费用独立</span>
+        </div>
+        <div className="segmented" role="tablist" aria-label="配额厂商">
+          {snapshot.plans.map((item) => (
+            <button
+              key={item.provider}
+              className={plan.provider === item.provider ? "active" : ""}
+              onClick={() => setSelected(item.provider)}
+            >
+              {item.provider}
+            </button>
+          ))}
+        </div>
+        <QuotaCard plan={plan} threshold={threshold} now={now} />
+      </section>
+    );
+  }
+  if (snapshot.needsKey.length) {
+    return (
+      <section className="data-section quota-section">
+        <div className="section-heading">
+          <h2>配额监控</h2>
+          <span>套餐限额，与费用独立</span>
+        </div>
+        <div className="quota-empty">
+          <b>已启用 {snapshot.needsKey.join("、")} 配额监控，但未配置 API Key</b>
+          <span>
+            请在「设置 → 系统凭据」填入{" "}
+            {snapshot.needsKey
+              .map((provider) => `${provider.toUpperCase()}_API_KEY`)
+              .join("、")}
+            。
+          </span>
+        </div>
+      </section>
+    );
+  }
+  const errorEntries = Object.entries(snapshot.errors);
+  if (errorEntries.length) {
+    return (
+      <section className="data-section quota-section">
+        <div className="section-heading">
+          <h2>配额监控</h2>
+        </div>
+        <div className="quota-empty">
+          {errorEntries.map(([provider, message]) => (
+            <span key={provider}>
+              {provider}：{message}
+            </span>
+          ))}
+        </div>
+      </section>
+    );
+  }
+  return null;
+}
+
 function BillingView() {
   const [report, setReport] = useState<BillingUsageReport | null>(null);
   const [range, setRange] = useState<RangeKey>("7d");
@@ -721,6 +918,7 @@ function BillingView() {
     end: number;
     label: string;
   } | null>(null);
+  const [routeFilter, setRouteFilter] = useState<string | null>(null);
   useEffect(() => {
     window.desktop.getBillingUsage().then(setReport);
     return window.desktop.onBillingUsageChanged(setReport);
@@ -735,12 +933,18 @@ function BillingView() {
   const bounds = rangeBounds(range, customStart, customEnd);
   const boundsStart = bounds?.start;
   const boundsEnd = bounds?.end;
+  const providers = useMemo(
+    () => providerOptions(report?.sessions ?? []),
+    [report],
+  );
+  const route =
+    routeFilter && providers.includes(routeFilter) ? routeFilter : null;
   const buckets = useMemo(
     () =>
       report && boundsStart !== undefined && boundsEnd !== undefined
-        ? rollupSeries(report.series, boundsStart, boundsEnd)
+        ? rollupSeries(report.series, boundsStart, boundsEnd, route)
         : [],
-    [report, boundsStart, boundsEnd],
+    [report, boundsStart, boundsEnd, route],
   );
   const granularity =
     boundsStart !== undefined &&
@@ -781,13 +985,18 @@ function BillingView() {
   const sessions = (report?.sessions ?? []).filter(
     (session) => session.requests,
   );
-  const filtered = selection
+  const routeSessions = route
     ? sessions.filter((session) =>
+        session.models.some((model) => model.provider === route),
+      )
+    : sessions;
+  const filtered = selection
+    ? routeSessions.filter((session) =>
         (report?.sessionHours[session.sessionId] ?? []).some(
           (hour) => hour >= selection.start && hour < selection.end,
         ),
       )
-    : sessions;
+    : routeSessions;
   const costDisplay =
     [...aggregate.cost.entries()]
       .map(([currency, nanos]) =>
@@ -814,6 +1023,7 @@ function BillingView() {
           </button>
         </div>
       </header>
+      <QuotaSection />
       <div className="summary-grid">
         <Summary label="请求" value={String(aggregate.requests)} />
         <Summary
@@ -864,6 +1074,31 @@ function BillingView() {
                 </button>
               ))}
             </div>
+            {providers.length > 1 && (
+              <div className="segmented" role="tablist" aria-label="厂商">
+                <button
+                  className={route === null ? "active" : ""}
+                  onClick={() => {
+                    setRouteFilter(null);
+                    setSelection(null);
+                  }}
+                >
+                  全部
+                </button>
+                {providers.map((provider) => (
+                  <button
+                    key={provider}
+                    className={route === provider ? "active" : ""}
+                    onClick={() => {
+                      setRouteFilter(provider);
+                      setSelection(null);
+                    }}
+                  >
+                    {provider}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {customOpen && (
             <div
@@ -950,13 +1185,13 @@ function BillingView() {
             <span>费用</span>
           </div>
           {filtered.map((session) => (
-            <div className="table-row" key={session.sessionId}>
-              <span>
-                <b>{session.title}</b>
-                <small>
-                  {session.models.map((model) => model.model).join(" · ")}
-                </small>
-              </span>
+              <div className="table-row" key={session.sessionId}>
+                <span>
+                  <b>{session.title}</b>
+                  <small>
+                    {session.models.map((model) => model.model).join(" · ")}
+                  </small>
+                </span>
               <span>{session.requests}</span>
               <span>
                 {(
@@ -987,617 +1222,6 @@ function BillingView() {
   );
 }
 
-const emptyMapping = {
-  imageArgument: "image",
-  imageEncoding: "data-url" as const,
-  questionArgument: "prompt",
-  mimeTypeArgument: "mimeType",
-  resultTextPath: null,
-};
-function directPreset(): VisionBackendConfig {
-  return {
-    id: crypto.randomUUID(),
-    kind: "direct",
-    name: "千问视觉",
-    enabled: true,
-    model: "qwen-vl-max",
-    timeoutMs: 60_000,
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    credentialName: "DASHSCOPE_API_KEY",
-    headers: {},
-    headerCredentialNames: {},
-  };
-}
-function mcpPreset(): McpVisionBackendConfig {
-  return {
-    id: crypto.randomUUID(),
-    kind: "mcp",
-    transport: "stdio",
-    name: "本地视觉 MCP",
-    enabled: true,
-    model: "由 MCP 管理",
-    timeoutMs: 60_000,
-    command: "npx",
-    args: [],
-    cwd: "",
-    env: {},
-    envCredentialNames: {},
-    allowLocalPath: false,
-    toolName: "",
-    mapping: emptyMapping,
-  };
-}
-
-function VisionView({
-  notify,
-}: {
-  notify: (message: string, error?: boolean) => void;
-}) {
-  const [settings, setSettings] = useState<VisionSettings | null>(null);
-  const [selectedId, setSelectedId] = useState("");
-  const [tools, setTools] = useState<string[]>([]);
-  const [secret, setSecret] = useState("");
-  const [image, setImage] = useState<string>("");
-  const [mime, setMime] = useState("image/png");
-  const [question, setQuestion] =
-    useState("请描述图片中的界面、文字和重要细节。");
-  const [result, setResult] = useState<VisionResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    window.desktop.getVisionSettings().then((value) => {
-      setSettings(value);
-      setSelectedId(value.defaultBackendId ?? value.backends[0]?.id ?? "");
-    });
-  }, []);
-  const backend = settings?.backends.find((entry) => entry.id === selectedId);
-  const patchBackend = (update: Partial<VisionBackendConfig>) =>
-    setSettings((current) =>
-      current
-        ? {
-            ...current,
-            backends: current.backends.map((entry) =>
-              entry.id === selectedId
-                ? ({ ...entry, ...update } as VisionBackendConfig)
-                : entry,
-            ),
-          }
-        : current,
-    );
-  const save = async () => {
-    if (!settings) return;
-    try {
-      const value = await window.desktop.setVisionSettings(settings);
-      setSettings(value);
-      notify("视觉服务设置已保存");
-    } catch (error) {
-      notify(String(error), true);
-    }
-  };
-  const add = (value: VisionBackendConfig) => {
-    setSettings((current) =>
-      current
-        ? {
-            ...current,
-            backends: [...current.backends, value],
-            defaultBackendId: current.defaultBackendId ?? value.id,
-          }
-        : current,
-    );
-    setSelectedId(value.id);
-  };
-  const analyze = async () => {
-    if (!image || !backend) return;
-    const requestId = crypto.randomUUID();
-    setBusy(true);
-    setResult(null);
-    try {
-      setResult(
-        await window.desktop.analyzeVision({
-          requestId,
-          backendId: backend.id,
-          question,
-          imageDataUrl: image,
-          mimeType: mime,
-        }),
-      );
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!settings)
-    return <Empty title="正在载入视觉服务" detail="读取加密凭据与后端配置…" />;
-  return (
-    <div className="feature-layout vision-feature">
-      <aside className="context-panel">
-        <div className="panel-title">
-          <div>
-            <span className="eyebrow">VISION BRIDGE</span>
-            <h2>视觉服务</h2>
-          </div>
-          <span className="count">{settings.backends.length}</span>
-        </div>
-        <div className="stack-actions">
-          <button onClick={() => add(directPreset())}>＋ Direct API</button>
-          <button onClick={() => add(mcpPreset())}>＋ MCP 服务</button>
-        </div>
-        <div className="backend-list">
-          {settings.backends.map((item) => (
-            <button
-              key={item.id}
-              className={item.id === selectedId ? "active" : ""}
-              onClick={() => setSelectedId(item.id)}
-            >
-              <span className={`status ${item.enabled ? "online" : ""}`} />
-              <span>
-                <b>{item.name}</b>
-                <small>
-                  {item.kind === "direct"
-                    ? "OpenAI-compatible"
-                    : `${item.transport} · ${item.toolName || "未选工具"}`}
-                </small>
-              </span>
-              {item.id === settings.defaultBackendId && <em>默认</em>}
-            </button>
-          ))}
-        </div>
-      </aside>
-      <main className="stage scroll-stage">
-        <div className="feature-header compact">
-          <div>
-            <span className="eyebrow">CONFIGURATION</span>
-            <h1>{backend?.name ?? "添加一个视觉服务"}</h1>
-            <p>纯文本主模型只接收视觉服务返回的文字结果。</p>
-          </div>
-          <div className="horizontal-actions">
-            {backend && (
-              <>
-                <button
-                  onClick={async () => {
-                    try {
-                      const tested =
-                        await window.desktop.testVisionBackend(backend);
-                      notify(
-                        tested.tools
-                          ? `连接成功，发现 ${tested.tools.length} 个工具`
-                          : "视觉 API 连接成功",
-                      );
-                    } catch (error) {
-                      notify(String(error), true);
-                    }
-                  }}
-                >
-                  测试连接
-                </button>
-                <button
-                  className="danger"
-                  onClick={() => {
-                    setSettings({
-                      ...settings,
-                      backends: settings.backends.filter(
-                        (item) => item.id !== backend.id,
-                      ),
-                      defaultBackendId:
-                        settings.defaultBackendId === backend.id
-                          ? null
-                          : settings.defaultBackendId,
-                    });
-                    setSelectedId("");
-                  }}
-                >
-                  删除
-                </button>
-              </>
-            )}
-            <button className="primary" onClick={() => void save()}>
-              保存设置
-            </button>
-          </div>
-        </div>
-        {backend ? (
-          <div className="form-sections">
-            <section className="form-section">
-              <h3>基本信息</h3>
-              <div className="form-grid">
-                <Field label="名称">
-                  <input
-                    value={backend.name}
-                    onChange={(e) => patchBackend({ name: e.target.value })}
-                  />
-                </Field>
-                <Field label="模型">
-                  <input
-                    value={backend.model}
-                    onChange={(e) => patchBackend({ model: e.target.value })}
-                  />
-                </Field>
-                <Field label="超时（毫秒）">
-                  <input
-                    type="number"
-                    value={backend.timeoutMs}
-                    onChange={(e) =>
-                      patchBackend({ timeoutMs: Number(e.target.value) })
-                    }
-                  />
-                </Field>
-                <label className="check-field">
-                  <input
-                    type="checkbox"
-                    checked={backend.enabled}
-                    onChange={(e) =>
-                      patchBackend({ enabled: e.target.checked })
-                    }
-                  />
-                  启用此服务
-                </label>
-              </div>
-            </section>
-            {backend.kind === "direct" ? (
-              <section className="form-section">
-                <h3>OpenAI-compatible API</h3>
-                <div className="form-grid">
-                  <Field label="Base URL">
-                    <input
-                      value={backend.baseUrl}
-                      onChange={(e) =>
-                        patchBackend({ baseUrl: e.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="凭据名称">
-                    <input
-                      value={backend.credentialName}
-                      onChange={(e) =>
-                        patchBackend({
-                          credentialName: e.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="保存密钥">
-                    <div className="inline">
-                      <input
-                        type="password"
-                        value={secret}
-                        onChange={(e) => setSecret(e.target.value)}
-                        placeholder="不会写入设置文件"
-                      />
-                      <button
-                        onClick={async () => {
-                          await window.desktop.setCredential(
-                            backend.credentialName,
-                            secret,
-                          );
-                          setSecret("");
-                          notify("密钥已加密保存");
-                        }}
-                      >
-                        保存
-                      </button>
-                    </div>
-                  </Field>
-                  <JsonRecordField
-                    label="普通请求头（JSON）"
-                    value={backend.headers}
-                    onChange={(headers) => patchBackend({ headers })}
-                  />
-                  <JsonRecordField
-                    label="请求头到凭据名称（JSON）"
-                    value={backend.headerCredentialNames}
-                    onChange={(headerCredentialNames) =>
-                      patchBackend({ headerCredentialNames })
-                    }
-                  />
-                </div>
-              </section>
-            ) : (
-              <McpFields
-                backend={backend}
-                patchBackend={patchBackend}
-                tools={tools}
-                discover={async () => {
-                  try {
-                    const found =
-                      await window.desktop.discoverVisionTools(backend);
-                    setTools(found.map((item) => item.name));
-                    notify(`发现 ${found.length} 个工具`);
-                  } catch (error) {
-                    notify(String(error), true);
-                  }
-                }}
-              />
-            )}
-            <section className="form-section">
-              <h3>默认策略</h3>
-              <div className="form-grid">
-                <Field label="桥接模式">
-                  <select
-                    value={settings.policy}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        policy: e.target.value as VisionSettings["policy"],
-                      })
-                    }
-                  >
-                    <option value="auto">自动（仅纯文本模型）</option>
-                    <option value="always">总是解析</option>
-                    <option value="off">关闭</option>
-                  </select>
-                </Field>
-                <label className="check-field">
-                  <input
-                    type="checkbox"
-                    checked={settings.defaultBackendId === backend.id}
-                    onChange={() =>
-                      setSettings({ ...settings, defaultBackendId: backend.id })
-                    }
-                  />
-                  设为默认服务
-                </label>
-                <label className="check-field warning-check">
-                  <input
-                    type="checkbox"
-                    checked={settings.remoteDisclosureAccepted}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        remoteDisclosureAccepted: e.target.checked,
-                      })
-                    }
-                  />
-                  我了解远程服务会接收所选图片
-                </label>
-              </div>
-            </section>
-          </div>
-        ) : (
-          <Empty
-            title="还没有视觉服务"
-            detail="添加 Direct API 或任意兼容的 MCP 服务。千问只是可选预设。"
-          />
-        )}
-      </main>
-      <aside className="inspector vision-test">
-        <span className="eyebrow">LIVE TEST</span>
-        <h3>发送前测试</h3>
-        <p className="muted">图片解析失败时不会继续发送给主模型。</p>
-        <label className="image-drop">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setMime(file.type);
-              const reader = new FileReader();
-              reader.onload = () => setImage(String(reader.result));
-              reader.readAsDataURL(file);
-            }}
-          />
-          {image ? (
-            <img src={image} />
-          ) : (
-            <span>
-              选择测试图片
-              <br />
-              <small>最大 20 MB</small>
-            </span>
-          )}
-        </label>
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-        />
-        <button
-          className="primary wide-button"
-          disabled={!image || !backend || busy}
-          onClick={() => void analyze()}
-        >
-          {busy ? "正在解析…" : "使用当前服务解析"}
-        </button>
-        {result && (
-          <div className="vision-result">
-            <b>
-              {result.backendName} · {result.durationMs} ms
-              {result.cached ? " · 缓存" : ""}
-            </b>
-            <p>{result.text}</p>
-          </div>
-        )}
-      </aside>
-    </div>
-  );
-}
-
-function McpFields({
-  backend,
-  patchBackend,
-  tools,
-  discover,
-}: {
-  backend: McpVisionBackendConfig;
-  patchBackend: (value: Partial<VisionBackendConfig>) => void;
-  tools: string[];
-  discover: () => void;
-}) {
-  const patch = (value: Partial<McpVisionBackendConfig>) =>
-    patchBackend(value as Partial<VisionBackendConfig>);
-  return (
-    <section className="form-section">
-      <div className="section-heading">
-        <h3>MCP 连接与映射</h3>
-        <button onClick={discover}>发现工具</button>
-      </div>
-      <div className="form-grid">
-        <Field label="传输">
-          <select
-            value={backend.transport}
-            onChange={(e) =>
-              patch(
-                e.target.value === "stdio"
-                  ? {
-                      transport: "stdio",
-                      command: "npx",
-                      args: [],
-                      cwd: "",
-                      env: {},
-                      envCredentialNames: {},
-                      allowLocalPath: false,
-                    }
-                  : {
-                      transport: "streamable-http",
-                      url: "http://127.0.0.1:3000/mcp",
-                      headers: {},
-                      headerCredentialNames: {},
-                    },
-              )
-            }
-          >
-            <option value="stdio">stdio</option>
-            <option value="streamable-http">Streamable HTTP</option>
-          </select>
-        </Field>
-        {backend.transport === "stdio" ? (
-          <>
-            <Field label="命令">
-              <input
-                value={backend.command}
-                onChange={(e) => patch({ command: e.target.value })}
-              />
-            </Field>
-            <Field label="参数（每行一个）">
-              <textarea
-                value={backend.args.join("\n")}
-                onChange={(e) =>
-                  patch({ args: e.target.value.split("\n").filter(Boolean) })
-                }
-              />
-            </Field>
-            <Field label="工作目录">
-              <input
-                value={backend.cwd}
-                onChange={(e) => patch({ cwd: e.target.value })}
-              />
-            </Field>
-            <JsonRecordField
-              label="环境变量（JSON）"
-              value={backend.env}
-              onChange={(env) => patch({ env })}
-            />
-            <JsonRecordField
-              label="环境变量到凭据名称（JSON）"
-              value={backend.envCredentialNames}
-              onChange={(envCredentialNames) => patch({ envCredentialNames })}
-            />
-          </>
-        ) : (
-          <>
-            <Field label="MCP URL">
-              <input
-                value={backend.url}
-                onChange={(e) => patch({ url: e.target.value })}
-              />
-            </Field>
-            <JsonRecordField
-              label="普通请求头（JSON）"
-              value={backend.headers}
-              onChange={(headers) => patch({ headers })}
-            />
-            <JsonRecordField
-              label="请求头到凭据名称（JSON）"
-              value={backend.headerCredentialNames}
-              onChange={(headerCredentialNames) =>
-                patch({ headerCredentialNames })
-              }
-            />
-          </>
-        )}
-        <Field label="工具名称">
-          <input
-            list="mcp-tools"
-            value={backend.toolName}
-            onChange={(e) => patch({ toolName: e.target.value })}
-          />
-          <datalist id="mcp-tools">
-            {tools.map((tool) => (
-              <option key={tool}>{tool}</option>
-            ))}
-          </datalist>
-        </Field>
-        <Field label="图片参数">
-          <input
-            value={backend.mapping.imageArgument}
-            onChange={(e) =>
-              patch({
-                mapping: { ...backend.mapping, imageArgument: e.target.value },
-              })
-            }
-          />
-        </Field>
-        <Field label="图片格式">
-          <select
-            value={backend.mapping.imageEncoding}
-            onChange={(e) =>
-              patch({
-                mapping: {
-                  ...backend.mapping,
-                  imageEncoding: e.target.value as
-                    "data-url" | "base64" | "path",
-                },
-              })
-            }
-          >
-            <option value="data-url">Data URL</option>
-            <option value="base64">Base64</option>
-            {backend.transport === "stdio" && (
-              <option value="path">本机路径（需授权）</option>
-            )}
-          </select>
-        </Field>
-        <Field label="问题参数">
-          <input
-            value={backend.mapping.questionArgument ?? ""}
-            onChange={(e) =>
-              patch({
-                mapping: {
-                  ...backend.mapping,
-                  questionArgument: e.target.value || null,
-                },
-              })
-            }
-          />
-        </Field>
-        <Field label="结果文字路径">
-          <input
-            value={backend.mapping.resultTextPath ?? ""}
-            onChange={(e) =>
-              patch({
-                mapping: {
-                  ...backend.mapping,
-                  resultTextPath: e.target.value || null,
-                },
-              })
-            }
-            placeholder="例如 structuredContent.description"
-          />
-        </Field>
-        {backend.transport === "stdio" &&
-          backend.mapping.imageEncoding === "path" && (
-            <label className="check-field warning-check">
-              <input
-                type="checkbox"
-                checked={backend.allowLocalPath}
-                onChange={(e) => patch({ allowLocalPath: e.target.checked })}
-              />
-              允许此本地进程读取图片绝对路径
-            </label>
-          )}
-      </div>
-    </section>
-  );
-}
 
 function SettingsView({
   info,
@@ -1609,6 +1233,12 @@ function SettingsView({
   const [credentialName, setCredentialName] = useState("DEEPSEEK_API_KEY");
   const [credentialValue, setCredentialValue] = useState("");
   const [message, setMessage] = useState("");
+  const [quotaSettings, setQuotaSettings] = useState<QuotaSettings>(
+    DEFAULT_QUOTA_SETTINGS,
+  );
+  useEffect(() => {
+    window.desktop.getQuotaSettings().then(setQuotaSettings).catch(() => {});
+  }, []);
   const act = async (task: () => Promise<unknown>, success: string) => {
     try {
       setMessage("处理中…");
@@ -1619,11 +1249,11 @@ function SettingsView({
       setMessage(error instanceof Error ? error.message : String(error));
     }
   };
-  const themeLabel: Record<"light" | "dark" | "system", string> = {
-    light: "浅色",
-    dark: "深色",
-    system: "跟随系统",
-  };
+  const persistQuota = (settings: QuotaSettings, success: string) =>
+    void act(async () => {
+      const updated = await window.desktop.setQuotaSettings(settings);
+      setQuotaSettings(updated);
+    }, success);
   return (
     <div className="settings-page">
       <div className="settings-inner">
@@ -1631,35 +1261,6 @@ function SettingsView({
           <h1>桌面设置</h1>
           <p>{info?.unofficialNotice}</p>
         </header>
-        <section className="settings-group">
-          <div className="settings-group-heading">
-            <h2>外观</h2>
-            <p>与 DeepSeek Harness 共用外观设置。</p>
-          </div>
-          <div className="appearance-grid" role="group" aria-label="外观">
-            {(
-              Object.keys(themeLabel) as Array<"light" | "dark" | "system">
-            ).map((theme) => (
-              <button
-                className="theme-card"
-                aria-pressed={info?.themePreference === theme}
-                key={theme}
-                onClick={() =>
-                  void act(
-                    () => window.desktop.setThemePreference(theme),
-                    "外观已更新",
-                  )
-                }
-              >
-                <span className={`theme-preview preview-${theme}`}></span>
-                <span className="theme-label">
-                  <span>{themeLabel[theme]}</span>
-                  <span className="selected-mark">✓</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
         <section className="settings-group">
           <div className="settings-group-heading">
             <h2>运行状态</h2>
@@ -1841,6 +1442,70 @@ function SettingsView({
             </button>
           </div>
         </section>
+        <section className="settings-group">
+          <div className="settings-group-heading">
+            <h2>配额监控</h2>
+            <p>
+              套餐厂商限额提醒，与费用独立。Kimi 的 key 在下方「系统凭据」填{" "}
+              KIMI_API_KEY。
+            </p>
+          </div>
+          <div className="quota-settings-row">
+            <span>启用配额监控</span>
+            <button
+              className={quotaSettings.enabled ? "switch-on" : ""}
+              aria-pressed={quotaSettings.enabled}
+              onClick={() =>
+                persistQuota(
+                  { ...quotaSettings, enabled: !quotaSettings.enabled },
+                  quotaSettings.enabled ? "配额监控已停用" : "配额监控已启用",
+                )
+              }
+            >
+              {quotaSettings.enabled ? "已开启" : "已关闭"}
+            </button>
+          </div>
+          <div className="quota-settings-grid">
+            <label className="field">
+              <span>轮询间隔</span>
+              <select
+                value={quotaSettings.pollIntervalMinutes}
+                onChange={(event) =>
+                  persistQuota(
+                    {
+                      ...quotaSettings,
+                      pollIntervalMinutes: Number(event.target.value),
+                    },
+                    "轮询间隔已更新",
+                  )
+                }
+              >
+                <option value={15}>15 分钟</option>
+                <option value={30}>30 分钟</option>
+                <option value={60}>60 分钟</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>预警阈值</span>
+              <select
+                value={quotaSettings.warningThreshold}
+                onChange={(event) =>
+                  persistQuota(
+                    {
+                      ...quotaSettings,
+                      warningThreshold: Number(event.target.value),
+                    },
+                    "预警阈值已更新",
+                  )
+                }
+              >
+                <option value={0.2}>用到 80%</option>
+                <option value={0.1}>用到 90%</option>
+                <option value={0.05}>用到 95%</option>
+              </select>
+            </label>
+          </div>
+        </section>
         <div className="settings-message" role="status" aria-live="polite">
           {message}
         </div>
@@ -1864,55 +1529,6 @@ function Summary({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
-  );
-}
-function Field({
-  label,
-  children,
-}: React.PropsWithChildren<{ label: string }>) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-function JsonRecordField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: Record<string, string>;
-  onChange: (value: Record<string, string>) => void;
-}) {
-  const [text, setText] = useState(JSON.stringify(value, null, 2));
-  const [invalid, setInvalid] = useState(false);
-  useEffect(() => setText(JSON.stringify(value, null, 2)), [value]);
-  return (
-    <Field label={label}>
-      <textarea
-        className={invalid ? "invalid" : ""}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={() => {
-          try {
-            const parsed = JSON.parse(text) as unknown;
-            if (
-              !parsed ||
-              Array.isArray(parsed) ||
-              typeof parsed !== "object" ||
-              Object.values(parsed).some((item) => typeof item !== "string")
-            )
-              throw new Error();
-            onChange(parsed as Record<string, string>);
-            setInvalid(false);
-          } catch {
-            setInvalid(true);
-          }
-        }}
-      />
-    </Field>
   );
 }
 
@@ -1961,55 +1577,27 @@ function App() {
         />
       ) : view === "billing" ? (
         <BillingView />
-      ) : view === "vision" ? (
-        <VisionView notify={notify} />
       ) : (
         <SettingsView info={info} setInfo={setInfo} />
       ),
     [view, info, notify],
   );
-  const rail = (
-    <nav className="activity-rail" aria-label="审阅与工具">
-      {NAV_VIEWS.map((item) => (
-        <button
-          key={item.id}
-          className={view === item.id ? "active" : ""}
-          onClick={() => setView(item.id)}
-          title={item.label}
-          aria-label={item.label}
-        >
-          <span>{item.glyph}</span>
-          <small>{item.label}</small>
-        </button>
-      ))}
-      <div className="rail-spacer" />
-      <button
-        className="rail-action"
-        onClick={() => void window.desktop.openBilling()}
-        title="用量与费用"
-        aria-label="用量与费用"
-      >
-        <span>¥</span>
-        <small>用量</small>
-      </button>
-      <button
-        className="rail-action"
-        onClick={() => void window.desktop.openSettings()}
-        title="桌面设置"
-        aria-label="桌面设置"
-      >
-        <span>⚙</span>
-        <small>设置</small>
-      </button>
-      <span
-        className={`harness-led ${info?.harness.status === "ready" ? "ready" : ""}`}
-        title={`Harness ${info?.harness.status ?? "starting"}`}
-      />
-    </nav>
-  );
   return (
     <div className={`app-shell${popup ? " popup-shell" : ""}`}>
-      {popup ? null : rail}
+      {popup ? null : (
+        <header className="workbench-header">
+          <div className="workbench-title">
+            <strong>代码变更</strong>
+            <small title={info?.activeWorkspacePath ?? undefined}>
+              {info?.activeWorkspacePath ?? "未打开工作区"}
+            </small>
+          </div>
+          <span
+            className={`harness-led ${info?.harness.status === "ready" ? "ready" : ""}`}
+            title={`Harness ${info?.harness.status ?? "starting"}`}
+          />
+        </header>
+      )}
       <section className="workbench">{content}</section>
       {toast && (
         <div className={`toast ${toast.error ? "error" : ""}`} role="status">

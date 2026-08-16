@@ -56,6 +56,47 @@ describe("writeDesktopOverlay", () => {
     expect(contents).toContain("file:///D:/Desktop%20App/billing/index.js");
   });
 
+  it("可插入桌面记忆插件文件 URL", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "dsh-desktop-memory-"),
+    );
+    temporaryDirectories.push(directory);
+    const overlayPath = await writeDesktopOverlay(
+      directory,
+      "D:\\Desktop App\\picker.js",
+      "D:\\Desktop App\\billing\\index.js",
+      "D:\\Desktop App\\memory\\index.js",
+    );
+    const contents = await readFile(overlayPath, "utf8");
+
+    expect(contents).toContain("id: desktop-billing");
+    expect(contents).toContain("file:///D:/Desktop%20App/billing/index.js");
+    expect(contents).toContain("id: desktop-memory");
+    expect(contents).toContain("file:///D:/Desktop%20App/memory/index.js");
+  });
+
+  it("可插入桌面视觉插件文件 URL", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "dsh-desktop-vision-"),
+    );
+    temporaryDirectories.push(directory);
+    const overlayPath = await writeDesktopOverlay(
+      directory,
+      "D:\\Desktop App\\picker.js",
+      "D:\\Desktop App\\billing\\index.js",
+      "D:\\Desktop App\\memory\\index.js",
+      "D:\\Desktop App\\vision\\index.js",
+    );
+    const contents = await readFile(overlayPath, "utf8");
+
+    expect(contents).toContain("id: desktop-billing");
+    expect(contents).toContain("file:///D:/Desktop%20App/billing/index.js");
+    expect(contents).toContain("id: desktop-memory");
+    expect(contents).toContain("file:///D:/Desktop%20App/memory/index.js");
+    expect(contents).toContain("id: desktop-vision");
+    expect(contents).toContain("file:///D:/Desktop%20App/vision/index.js");
+  });
+
   it("在 Harness 最终配置中禁用 auto 后端并插入桌面后端", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "dsh-desktop-compose-"),
@@ -64,6 +105,9 @@ describe("writeDesktopOverlay", () => {
     const overlayPath = await writeDesktopOverlay(
       directory,
       "D:\\Desktop App\\picker.js",
+      "D:\\Desktop App\\billing\\index.js",
+      "D:\\Desktop App\\memory\\index.js",
+      "D:\\Desktop App\\vision\\index.js",
     );
     const dshPackage = require.resolve("@deepseek-ai/dsh/package.json");
     const dshEntry = path.join(path.dirname(dshPackage), "lib", "bin.js");
@@ -81,5 +125,8 @@ describe("writeDesktopOverlay", () => {
     expect(result.stdout).toMatch(/id: directory-picker[\s\S]*?disabled: true/);
     expect(result.stdout).toContain("id: directory-picker-desktop");
     expect(result.stdout).toContain("file:///D:/Desktop%20App/picker.js");
+    expect(result.stdout).toContain("id: desktop-billing");
+    expect(result.stdout).toContain("id: desktop-memory");
+    expect(result.stdout).toContain("id: desktop-vision");
   }, 15_000);
 });

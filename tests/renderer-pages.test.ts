@@ -68,13 +68,15 @@ describe("renderer pages", () => {
     );
     expect(source).toContain("findComposerBoundary");
     expect(source).toContain("available >= 352");
-    expect(source).toContain("模型费用 · 点击查看详情");
+    expect(source).toContain("dsh-sess-model-row");
     expect(source).toContain('h("strong", null, "会话信息")');
-    expect(source).toContain('h("span", null, "当前模型")');
+    expect(source).toContain("dsh-sess-status");
+    expect(source).toContain("dsh-sess-kpis");
+    expect(source).toContain("dsh-sess-spark-line");
     expect(source).toContain("dsh-current-label");
     expect(source).toContain("dsh-panel-scroll");
     expect(source).toContain("dsh-info-section");
-    expect(source).toContain("expandedSections.billing");
+    expect(source).toContain("dsh-sess-section-title");
     expect(source).toContain("session.models.map");
     expect(source).toContain("modelDirectories.directoryFor(sessionId).store");
     expect(source).toContain("reportBillingUsage");
@@ -96,7 +98,7 @@ describe("renderer pages", () => {
       ),
     );
     expect(source).toContain("context: event.data, last: null");
-    expect(source).toContain("stateVersion: 3");
+    expect(source).toContain("stateVersion: 4");
     expect(source).toContain("revision: state.revision + 1");
   });
 
@@ -144,16 +146,32 @@ describe("renderer pages", () => {
       ),
     );
     expect(workbench).toContain("DiffEditor");
-    expect(workbench).toContain("discoverVisionTools");
+    expect(workbench).not.toContain("VisionView");
+    expect(workbench).not.toContain("discoverVisionTools");
+    expect(workbench).not.toContain("vision");
     expect(workbench).toContain("撤销此处");
-    expect(workbench).toContain('className="theme-card"');
-    expect(workbench).toContain("theme-preview preview-");
+    expect(workbench).not.toContain('className="theme-card"');
+    expect(workbench).not.toContain("theme-preview preview-");
     expect(workbench).toContain('query.get("mode") === "popup"');
-    expect(workbench).toContain("window.desktop.openBilling()");
-    expect(workbench).toContain("window.desktop.openSettings()");
+    expect(workbench).not.toContain("window.desktop.openBilling()");
+    expect(workbench).not.toContain("window.desktop.openSettings()");
+    expect(workbench).not.toContain("activity-rail");
+    expect(workbench).toContain("workbench-header");
     expect(workbench).not.toContain('id: "settings", label: "设置"');
     expect(sidecar).toContain("createChangeBatch");
-    expect(sidecar).toContain("desktop_vision_context");
-    expect(sidecar).toContain('id: "desktop-vision-bridge"');
+    expect(sidecar).not.toContain("VisionBridge");
+    expect(sidecar).not.toContain("desktop-vision-bridge");
+    expect(sidecar).not.toContain("analyzeVision");
+    expect(sidecar).not.toContain("desktop_vision_context");
+    expect(sidecar).toContain("saveVisionImage");
+    expect(sidecar).toContain("vision_understand");
+    expect(sidecar).toContain("desktop-vision");
+    expect(sidecar).toContain("图片已保存");
+    expect(sidecar).toContain('id: "desktop-memory"');
+    expect(sidecar).toContain('"settings.section"');
+    expect(sidecar).toContain("dshMemoryNav");
+    expect(sidecar).toContain("desktop memory settings nav decoration");
+    expect(sidecar).toContain("dshVisionNav");
+    expect(sidecar).toContain("desktop vision settings nav decoration");
   });
 });

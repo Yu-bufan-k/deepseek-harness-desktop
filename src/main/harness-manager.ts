@@ -19,6 +19,8 @@ export interface HarnessManagerOptions {
   log: (message: string) => void;
   desktopOverlayPath: string;
   directoryPickerBridge: { port: number; token: string };
+  /** 跨会话记忆 JSON 文件路径，经 DSH_DESKTOP_MEMORY_PATH 注入 Harness 子进程。 */
+  memoryPath: string;
 }
 
 export class HarnessManager extends EventEmitter {
@@ -82,6 +84,7 @@ export class HarnessManager extends EventEmitter {
       DSH_DESKTOP_SESSION_TOKEN: this.sessionToken,
       DSH_DESKTOP_BRIDGE_PORT: String(this.options.directoryPickerBridge.port),
       DSH_DESKTOP_BRIDGE_TOKEN: this.options.directoryPickerBridge.token,
+      DSH_DESKTOP_MEMORY_PATH: this.options.memoryPath,
       ELECTRON_RUN_AS_NODE: "1",
     };
 

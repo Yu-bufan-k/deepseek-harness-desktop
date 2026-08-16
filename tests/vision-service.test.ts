@@ -1,13 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CredentialStore } from "../src/main/credential-store.js";
 import { SettingsStore } from "../src/main/settings-store.js";
-import {
-  composeVisionPrompt,
-  VisionService,
-} from "../src/main/vision-service.js";
+import { VisionService } from "../src/main/vision-service.js";
 import type {
   DirectVisionBackendConfig,
   VisionSettings,
@@ -43,13 +40,12 @@ const backend: DirectVisionBackendConfig = {
   timeoutMs: 10_000,
   baseUrl: "https://vision.example/v1",
   credentialName: "VISION_API_KEY",
-  headers: {},
-  headerCredentialNames: {},
 };
 const configured: VisionSettings = {
   policy: "auto",
   defaultBackendId: backend.id,
   remoteDisclosureAccepted: true,
+  imageDirectory: null,
   backends: [backend],
 };
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
@@ -81,13 +77,6 @@ describe("VisionService", () => {
     expect(first.usage.outputTokens).toBe(5);
     expect(second.cached).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(await service.listAttachments()).toMatchObject([
-      { id: "two", status: "ready", visionText: "一张测试图片" },
-      { id: "one", status: "ready" },
-    ]);
-    expect(composeVisionPrompt("用户问题", first)).toContain(
-      "desktop_vision_context",
-    );
   });
 
   it("requires disclosure before sending an image to a remote backend", async () => {
@@ -106,36 +95,46 @@ describe("VisionService", () => {
     ).rejects.toThrow("数据外发");
   });
 
-  it("rejects file-path mapping for a remote MCP backend", async () => {
+  it("reads a trusted imagePath and sends its data URL to a direct backend", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "dsh-vision-file-"));
+    directories.push(directory);
+    const file = path.join(directory, "pixel.png");
+    await writeFile(file, Buffer.from("iVBORw0KGgo=", "base64"));
+    const { service } = await fixture();
+    await service.setSettings(configured);
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: "读盘成功" } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await service.analyze({
+      requestId: "one",
+      question: "描述",
+      imagePath: file,
+      mimeType: "image/png",
+    });
+    expect(result.text).toBe("读盘成功");
+    const requestBody = JSON.parse(
+      fetchMock.mock.calls[0]![1]!.body as string,
+    );
+    expect(requestBody.messages[0].content[1].image_url.url).toContain(
+      "base64,iVBORw0KGgo=",
+    );
+  });
+
+  it("rejects backend configs that reference a nonexistent default", async () => {
     const { service } = await fixture();
     await expect(
       service.setSettings({
         policy: "auto",
-        defaultBackendId: "remote",
-        remoteDisclosureAccepted: true,
-        backends: [
-          {
-            id: "remote",
-            kind: "mcp",
-            transport: "streamable-http",
-            name: "远程 MCP",
-            enabled: true,
-            model: "vision",
-            timeoutMs: 10_000,
-            url: "https://mcp.example/api",
-            headers: {},
-            headerCredentialNames: {},
-            toolName: "describe",
-            mapping: {
-              imageArgument: "image",
-              imageEncoding: "path",
-              questionArgument: "prompt",
-              mimeTypeArgument: null,
-              resultTextPath: null,
-            },
-          },
-        ],
+        defaultBackendId: "missing",
+        remoteDisclosureAccepted: false,
+        imageDirectory: null,
+        backends: [backend],
       }),
-    ).rejects.toThrow("远程 MCP");
+    ).rejects.toThrow("默认视觉服务不存在");
   });
 });

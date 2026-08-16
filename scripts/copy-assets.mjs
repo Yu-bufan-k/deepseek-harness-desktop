@@ -6,6 +6,8 @@ await mkdir("dist/renderer", { recursive: true });
 await cp("src/renderer", "dist/renderer", { recursive: true });
 await mkdir("dist/plugins", { recursive: true });
 await cp("plugins/billing", "dist/plugins/billing", { recursive: true });
+await cp("plugins/memory", "dist/plugins/memory", { recursive: true });
+await cp("plugins/vision", "dist/plugins/vision", { recursive: true });
 const require = createRequire(import.meta.url);
 const themePackage =
   require.resolve("@deepseek-ai/dsh-client-ui-theme/package.json");

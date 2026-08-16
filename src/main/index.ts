@@ -1,6 +1,7 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { unwatchFile, watchFile } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import {
   app,
   BrowserWindow,
@@ -21,10 +22,13 @@ import {
   type HarnessInfo,
   type OpenWorkspaceRequest,
   type OpenWorkspaceResult,
+  type SavedVisionImage,
   type ThemePreference,
+  type VisionSettings,
   type UpdateChannel,
   type UpdateState,
 } from "../shared/contracts.js";
+import { EventLog } from "./event-log.js";
 import {
   billingSettingsSnapshot,
   BillingUsageSummarizer,
@@ -36,7 +40,13 @@ import {
   type BillingUsageReport,
   type BillingUsageSample,
   type BillingUsageSync,
+  type BillingSessionTools,
 } from "../shared/billing.js";
+import {
+  DEFAULT_QUOTA_SETTINGS,
+  validateQuotaSettings,
+  type QuotaSettings,
+} from "../shared/quota.js";
 import { isSafeExternalUrl } from "../shared/security.js";
 import { HarnessManager } from "./harness-manager.js";
 import { SettingsStore } from "./settings-store.js";
@@ -53,6 +63,9 @@ import { DeepSeekBalanceService } from "./deepseek-balance.js";
 import { readHarnessCredential } from "./harness-credential-reader.js";
 import { ChangeSetService } from "./change-set-service.js";
 import { VisionService } from "./vision-service.js";
+import { quotaSourcesFor, type QuotaSource } from "./quota-source.js";
+import { QuotaMonitor } from "./quota-monitor.js";
+import { MemoryStore } from "./memory-store.js";
 
 const PRODUCT_NAME = "DeepSeek Harness Desktop";
 const UNOFFICIAL_NOTICE = "非 DeepSeek 官方产品，由社区独立维护。";
@@ -81,6 +94,7 @@ let activeWorkspaceContext: {
 } | null = null;
 let harness: HarnessManager;
 let settings: SettingsStore;
+let eventLog: EventLog;
 let credentials: CredentialStore;
 let deepSeekBalance: DeepSeekBalanceService;
 let changeSets: ChangeSetService;
@@ -106,6 +120,9 @@ const billingUsageSummarizer = new BillingUsageSummarizer();
 let billingUsageWarnings: string[] = [];
 let billingCurrentTarget: BillingModelTarget | undefined;
 let billingUsageReport: BillingUsageReport;
+let quotaMonitor: QuotaMonitor;
+let quotaRefreshTimer: NodeJS.Timeout | null = null;
+let memoryStore: MemoryStore;
 let appliedTheme: ThemePreference | null = null;
 let quitting = false;
 let startupCompleting = false;
@@ -132,6 +149,95 @@ function directoryPickerPluginPath(): string {
 }
 function billingPluginPath(): string {
   return path.join(__dirname, "..", "plugins", "billing", "index.js");
+}
+function memoryPluginPath(): string {
+  return path.join(__dirname, "..", "plugins", "memory", "index.js");
+}
+function visionPluginPath(): string {
+  return path.join(__dirname, "..", "plugins", "vision", "index.js");
+}
+// 视觉图片存盘目录：默认 userData/vision，用户可在视觉设置里自定义
+// imageDirectory（切换目录后旧占位指向旧目录，解析会失败，属预期行为）。
+function visionImagesDirectory(settings: VisionSettings): string {
+  const custom = settings.imageDirectory?.trim();
+  return custom
+    ? path.resolve(custom)
+    : path.join(app.getPath("userData"), "vision");
+}
+function visionExtension(mimeType: string): string {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    case "image/bmp":
+      return "bmp";
+    case "image/avif":
+      return "avif";
+    default:
+      return "bin";
+  }
+}
+function visionMimeForExtension(extension: string): string {
+  switch (extension) {
+    case "png":
+      return "image/png";
+    case "jpg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "bmp":
+      return "image/bmp";
+    case "avif":
+      return "image/avif";
+    default:
+      return "application/octet-stream";
+  }
+}
+async function saveVisionImageFile(
+  dataUrl: string,
+  directory: string,
+): Promise<SavedVisionImage> {
+  const match =
+    /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!match) throw new Error("图片 Data URL 无效");
+  const buffer = Buffer.from(match[2]!, "base64");
+  if (!buffer.length || buffer.length > 20 * 1024 * 1024)
+    throw new Error("图片大小必须在 20 MB 以内");
+  const mimeType = match[1]!;
+  const imageId = createHash("sha256").update(buffer).digest("hex");
+  await mkdir(directory, { recursive: true });
+  try {
+    await writeFile(
+      path.join(directory, `${imageId}.${visionExtension(mimeType)}`),
+      buffer,
+      { flag: "wx" },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return { imageId, mimeType };
+}
+async function resolveVisionImageFile(imageId: string, directory: string): Promise<{
+  dataUrl: string;
+  mimeType: string;
+}> {
+  if (!/^[a-f0-9]{64}$/i.test(imageId)) throw new Error("无效的图片 ID");
+  const entries = await readdir(directory);
+  const entry = entries.find((name) => name.startsWith(`${imageId}.`));
+  if (!entry) throw new Error("图片不存在或已被清理");
+  const mimeType = visionMimeForExtension(entry.split(".").pop() ?? "");
+  const buffer = await readFile(path.join(directory, entry));
+  return {
+    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+    mimeType,
+  };
 }
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -523,6 +629,23 @@ function isBillingSample(value: unknown): value is BillingUsageSample {
   );
 }
 
+function isBillingTools(value: unknown): value is BillingSessionTools {
+  if (!value || typeof value !== "object") return false;
+  const tools = value as Record<string, unknown>;
+  const isRecord = (field: unknown): field is Record<string, number> =>
+    !!field &&
+    typeof field === "object" &&
+    !Array.isArray(field) &&
+    Object.entries(field).every(
+      ([key, count]) =>
+        key.length > 0 &&
+        typeof count === "number" &&
+        Number.isSafeInteger(count) &&
+        count >= 0,
+    );
+  return isRecord(tools.tools) && isRecord(tools.mcp) && isRecord(tools.skills);
+}
+
 function normalizeBillingUsageSync(value: unknown): {
   sync: BillingUsageSync;
   warnings: string[];
@@ -571,6 +694,7 @@ function normalizeBillingUsageSync(value: unknown): {
       title?: unknown;
       revision?: unknown;
       samples?: unknown;
+      tools?: unknown;
     };
     if (
       typeof session.sessionId !== "string" ||
@@ -585,12 +709,17 @@ function normalizeBillingUsageSync(value: unknown): {
     const samples = session.samples.slice(-100_000);
     droppedSamples += session.samples.length - samples.length;
     if (!samples.every(isBillingSample)) throw new Error("无效的请求用量");
-    return {
+    if (session.tools !== undefined && !isBillingTools(session.tools))
+      throw new Error("无效的工具调用汇总");
+    const next = {
       sessionId: session.sessionId,
       title: session.title.slice(0, 500),
       revision: session.revision,
       samples,
     };
+    return session.tools === undefined
+      ? next
+      : { ...next, tools: session.tools };
   });
   if (
     new Set(sessions.map((session) => session.sessionId)).size !==
@@ -650,6 +779,40 @@ function broadcastBillingUsage(): void {
   for (const window of BrowserWindow.getAllWindows())
     if (!window.isDestroyed())
       window.webContents.send(IPC.billingUsageChanged, report);
+}
+
+function quotaSettings(): QuotaSettings {
+  return settings.get().quota ?? DEFAULT_QUOTA_SETTINGS;
+}
+
+function broadcastQuota(): void {
+  const snapshot = quotaMonitor.get();
+  for (const window of BrowserWindow.getAllWindows())
+    if (!window.isDestroyed()) window.webContents.send(IPC.quotaChanged, snapshot);
+}
+
+function quotaSources(): QuotaSource[] {
+  return quotaSourcesFor(billing.get(), {
+    credentialFor: async (provider: string) => {
+      const name = `${provider.toUpperCase()}_API_KEY`;
+      return (
+        (await credentials.get(name)) ??
+        (await readHarnessCredential(
+          path.join(app.getPath("userData"), "dsh"),
+          name,
+        ))
+      );
+    },
+  });
+}
+
+/** 发请求后防抖刷新配额，让"刚刚撞上限额"尽快体现在界面上。 */
+function scheduleQuotaRefresh(): void {
+  if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+  quotaRefreshTimer = setTimeout(() => {
+    quotaRefreshTimer = null;
+    void quotaMonitor.refresh(true);
+  }, 2_000);
 }
 
 function billingTarget(value: unknown): BillingModelTarget | undefined {
@@ -724,8 +887,8 @@ async function showLegacyBilling(target?: BillingModelTarget): Promise<void> {
     billingWindow.webContents.send(IPC.billingEditRequested, target);
 }
 
-type WorkbenchView = "changes" | "vision";
-const workbenchViews = new Set<WorkbenchView>(["changes", "vision"]);
+type WorkbenchView = "changes";
+const workbenchViews = new Set<WorkbenchView>(["changes"]);
 
 async function showWorkbench(view: WorkbenchView = "changes"): Promise<void> {
   if (workbenchWindow && !workbenchWindow.isDestroyed()) {
@@ -1041,11 +1204,13 @@ function registerIpc(): void {
   handle(IPC.setCredential, async (_event, name: string, value: string) => {
     await credentials.set(name, value);
     if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate();
+    if (name.endsWith("_API_KEY")) quotaMonitor.invalidate();
   });
   handle(IPC.hasCredential, (_event, name: string) => credentials.has(name));
   handle(IPC.removeCredential, async (_event, name: string) => {
     await credentials.remove(name);
     if (name === "DEEPSEEK_API_KEY") deepSeekBalance.invalidate();
+    if (name.endsWith("_API_KEY")) quotaMonitor.invalidate();
   });
   handle(IPC.getDeepSeekBalance, () => deepSeekBalanceSnapshot());
   handle(IPC.refreshDeepSeekBalance, () => deepSeekBalanceSnapshot(true));
@@ -1091,6 +1256,38 @@ function registerIpc(): void {
     return { ...result, settings: billingSettingsSnapshot(result.settings) };
   });
   handle(IPC.getBillingUsage, () => refreshBillingReport());
+  handle(IPC.getQuotaUsage, async () => {
+    if (!quotaSettings().enabled) return quotaMonitor.refresh();
+    const snapshot = quotaMonitor.get();
+    const fresh =
+      Boolean(snapshot.fetchedAt) &&
+      Date.parse(snapshot.fetchedAt) >=
+        Date.now() - quotaSettings().pollIntervalMinutes * 60_000;
+    return fresh ? snapshot : quotaMonitor.refresh();
+  });
+  handle(IPC.refreshQuotaUsage, () => quotaMonitor.refresh(true));
+  handle(IPC.getQuotaSettings, () => quotaSettings());
+  handle(IPC.setQuotaSettings, async (_event, value: unknown) => {
+    const saved = await settings.patch({
+      quota: validateQuotaSettings(
+        value && typeof value === "object"
+          ? (value as Partial<QuotaSettings>)
+          : undefined,
+      ),
+    });
+    quotaMonitor.start();
+    return saved.quota ?? DEFAULT_QUOTA_SETTINGS;
+  });
+  handle(IPC.getMemoryEntries, () => memoryStore.list());
+  handle(IPC.deleteMemoryEntry, async (_event, idValue: unknown) => {
+    if (typeof idValue !== "string" || !idValue) throw new Error("记忆 ID 无效");
+    return await memoryStore.delete(idValue);
+  });
+  handle(IPC.getMemoryToolsEnabled, () => memoryStore.getEnabled());
+  handle(IPC.setMemoryToolsEnabled, async (_event, enabledValue: unknown) => {
+    if (typeof enabledValue !== "boolean") throw new Error("记忆开关值无效");
+    return await memoryStore.setEnabled(enabledValue);
+  });
   handle(
     IPC.reportBillingUsage,
     (_event, value: unknown, targetValue?: unknown) => {
@@ -1104,6 +1301,24 @@ function registerIpc(): void {
         : normalized.warnings;
       billingCurrentTarget = billingTarget(targetValue);
       broadcastBillingUsage();
+      scheduleQuotaRefresh();
+      const reported = value as {
+        collectedAt?: string;
+        sessionIds?: string[];
+        sessions?: Array<{ sessionId: string; revision: string; samples?: unknown[] }>;
+        droppedSessions?: string[];
+      } | null;
+      void eventLog.append("session", "usage-report", {
+        collectedAt: reported?.collectedAt ?? null,
+        sessionIds: reported?.sessionIds ?? [],
+        sessionCount: reported?.sessions?.length ?? 0,
+        sampleCount:
+          reported?.sessions?.reduce(
+            (sum, session) => sum + (session.samples?.length ?? 0),
+            0,
+          ) ?? 0,
+        droppedSessions: reported?.droppedSessions ?? [],
+      });
       return billingUsageReport;
     },
   );
@@ -1220,29 +1435,124 @@ function registerIpc(): void {
     },
   );
   handle(IPC.getVisionSettings, () => vision.getSettings());
-  handle(IPC.setVisionSettings, (_event, value: unknown) =>
-    vision.setSettings(value as never),
-  );
-  handle(IPC.discoverVisionTools, (_event, value: unknown) =>
-    vision.discoverTools(value as never),
-  );
-  handle(IPC.testVisionBackend, (_event, value: unknown) =>
-    vision.testBackend(value as never),
-  );
-  handle(IPC.analyzeVision, (_event, value: unknown) =>
-    vision.analyze(value as never),
-  );
-  handle(IPC.cancelVision, (_event, requestId: unknown) => {
-    vision.cancel(checkedText(requestId, "请求 ID", 120));
+  handle(IPC.setVisionSettings, (_event, value: unknown) => {
+    const before = vision.getSettings();
+    return vision.setSettings(value as never).then((saved) => {
+      void eventLog.append("setting-change", "vision", {
+        policy: saved.policy,
+        defaultBackendId: saved.defaultBackendId,
+        backends: saved.backends.length,
+        imageDirectory: saved.imageDirectory,
+        remoteDisclosureAccepted: saved.remoteDisclosureAccepted,
+        changed: JSON.stringify(before) !== JSON.stringify(saved),
+      });
+      return saved;
+    });
   });
-  handle(IPC.getCachedVision, (_event, value: unknown) =>
-    vision.cached(value as never),
+  handle(IPC.testVisionBackend, (_event, value: unknown) =>
+    vision
+      .testBackend(value as never)
+      .then((result) => {
+        const backend = value as { id?: string; name?: string };
+        void eventLog.append("ipc", "test-vision-backend", {
+          backendId: backend?.id ?? null,
+          backendName: backend?.name ?? null,
+          ok: true,
+        });
+        return result;
+      })
+      .catch((cause) => {
+        const backend = value as { id?: string; name?: string };
+        void eventLog.append("error", "test-vision-backend", {
+          backendId: backend?.id ?? null,
+          backendName: backend?.name ?? null,
+          message: cause instanceof Error ? cause.message : String(cause),
+        });
+        throw cause;
+      }),
   );
-  handle(IPC.listVisionAttachments, (_event, value?: unknown) =>
-    vision.listAttachments(
-      value === undefined ? undefined : checkedText(value, "会话 ID", 240),
-    ),
-  );
+  handle(IPC.saveVisionImage, (_event, value: unknown) => {
+    if (typeof value !== "string" || value.length > 30_000_000)
+      throw new Error("图片 Data URL 无效");
+    return saveVisionImageFile(
+      value,
+      visionImagesDirectory(vision.getSettings()),
+    ).then((saved) => {
+      void eventLog.append("ipc", "save-vision-image", {
+        imageId: saved.imageId,
+        mimeType: saved.mimeType,
+      });
+      return saved;
+    });
+  });
+  handle(IPC.pickVisionImageDirectory, async () => {
+    const picked = await showDirectoryPicker();
+    void eventLog.append("ipc", "pick-vision-image-directory", {
+      picked: picked ?? null,
+    });
+    return picked;
+  });
+  handle(IPC.clearVisionImages, async () => {
+    const directory = visionImagesDirectory(vision.getSettings());
+    let removed = 0;
+    try {
+      const entries = await readdir(directory);
+      for (const entry of entries) {
+        await rm(path.join(directory, entry), { force: true });
+        removed += 1;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    void eventLog.append("user-action", "clear-vision-images", {
+      removed,
+      directory,
+    });
+    return removed;
+  });
+  handle(IPC.appendEventLog, (_event, entry: unknown) => {
+    const value = entry as { area?: unknown; type?: unknown } | null;
+    const area =
+      typeof value?.area === "string" ? value.area.slice(0, 60) : "sidecar";
+    const type =
+      typeof value?.type === "string" ? value.type.slice(0, 60) : "event";
+    const fields: Record<string, unknown> = { ...value };
+    delete fields.area;
+    delete fields.type;
+    return eventLog.append(area, type, fields);
+  });
+  handle(IPC.openLogDirectory, async () => {
+    const directory = eventLog.directoryPath();
+    await shell.openPath(directory);
+    void eventLog.append("user-action", "open-log-directory", { directory });
+  });
+  handle(IPC.pickEventLogDirectory, async () => {
+    const picked = await showDirectoryPicker();
+    await settings.patch({ eventLogDirectory: picked });
+    if (picked) {
+      eventLog = new EventLog({ directory: () => picked });
+      void eventLog.prune();
+    }
+    void eventLog.append("setting-change", "event-log-directory", {
+      picked: picked ?? null,
+    });
+    return picked;
+  });
+  handle(IPC.getEventLogDirectory, () => settings.get()?.eventLogDirectory ?? null);
+  handle(IPC.resetEventLogDirectory, async () => {
+    await settings.patch({ eventLogDirectory: null });
+    eventLog = new EventLog({
+      directory: () => {
+        const current = settings.get();
+        return current?.eventLogDirectory?.trim()
+          ? path.resolve(current.eventLogDirectory.trim())
+          : path.join(app.getPath("userData"), "logs");
+      },
+    });
+    void eventLog.append("setting-change", "event-log-directory", {
+      picked: null,
+    });
+  });
   ipcMain.on(IPC.harnessIntegrationReady, (event) => {
     try {
       assertTrustedIpc(event);
@@ -1339,6 +1649,8 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   if (themeStore) unwatchFile(themeStore.filePath);
+  if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+  quotaMonitor?.stop();
   void harness
     .stop()
     .then(() => directoryPickerBridge?.stop())
@@ -1364,6 +1676,15 @@ void app.whenReady().then(async () => {
   );
   settings = new SettingsStore(userData);
   await settings.load();
+  eventLog = new EventLog({
+    directory: () => {
+      const current = settings.get();
+      return current?.eventLogDirectory?.trim()
+        ? path.resolve(current.eventLogDirectory.trim())
+        : path.join(userData, "logs");
+    },
+  });
+  void eventLog.prune();
   billing = new BillingStore(settings, app.getAppPath());
   await billing.load();
   billingUsageReport = billingUsageSummarizer.summarize(
@@ -1372,6 +1693,7 @@ void app.whenReady().then(async () => {
     new Date().toISOString(),
   );
   credentials = new CredentialStore(userData);
+  memoryStore = new MemoryStore(userData);
   changeSets = new ChangeSetService(userData);
   vision = new VisionService(settings, credentials, userData);
   deepSeekBalance = new DeepSeekBalanceService({
@@ -1382,16 +1704,72 @@ void app.whenReady().then(async () => {
         "DEEPSEEK_API_KEY",
       )),
   });
+  quotaMonitor = new QuotaMonitor({
+    sources: quotaSources,
+    settings: quotaSettings,
+    broadcast: broadcastQuota,
+  });
+  quotaMonitor.start();
   updates = new UpdateManager(
     settings.get().updateChannel,
     settings.get().updateRepository,
   );
-  directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker);
+  directoryPickerBridge = new DirectoryPickerBridge(showDirectoryPicker, {
+    getConfig: async () => {
+      const settings = vision.getSettings();
+      return {
+        policy: settings.policy,
+        hasBackends: settings.backends.some((backend) => backend.enabled),
+        defaultBackendId: settings.defaultBackendId,
+      };
+    },
+    analyze: async (request) => {
+      const settings = vision.getSettings();
+      const startedAt = Date.now();
+      try {
+        const image = await resolveVisionImageFile(
+          request.imageId,
+          visionImagesDirectory(settings),
+        );
+        const result = await vision.analyze({
+          requestId: randomUUID(),
+          backendId: request.backendId ?? settings.defaultBackendId ?? undefined,
+          question: request.question,
+          imageDataUrl: image.dataUrl,
+          mimeType: image.mimeType,
+        });
+        void eventLog.append("vision-analyze", "request", {
+          imageId: request.imageId,
+          backendName: result.backendName,
+          model: result.model,
+          cached: result.cached,
+          durationMs: result.durationMs,
+          outputTokens: result.usage?.outputTokens ?? null,
+        });
+        return {
+          text: result.text,
+          backendName: result.backendName,
+          model: result.model,
+          cached: result.cached,
+          durationMs: result.durationMs,
+        };
+      } catch (cause) {
+        void eventLog.append("error", "vision-analyze", {
+          imageId: request.imageId,
+          durationMs: Date.now() - startedAt,
+          message: cause instanceof Error ? cause.message : String(cause),
+        });
+        throw cause;
+      }
+    },
+  });
   const bridgeInfo = await directoryPickerBridge.start();
   const desktopOverlayPath = await writeDesktopOverlay(
     path.join(userData, "desktop-runtime"),
     directoryPickerPluginPath(),
     billingPluginPath(),
+    memoryPluginPath(),
+    visionPluginPath(),
   );
   harness = new HarnessManager({
     dshHome: path.join(userData, "dsh"),
@@ -1400,6 +1778,7 @@ void app.whenReady().then(async () => {
     log: (message) => log.info(message),
     desktopOverlayPath,
     directoryPickerBridge: bridgeInfo,
+    memoryPath: path.join(userData, "memory.json"),
   });
   harness.on("changed", (info) => {
     broadcastInfo();

@@ -45,6 +45,13 @@ export default tseslint.config(
     },
   },
   {
+    // Cordis 服务端插件运行在 Harness Node 子进程（如 plugins/billing、plugins/memory）。
+    files: ["plugins/**/*.{js,mjs}"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+  {
     // `_` 前缀约定：解构里故意丢弃的字段（`label: _label` 等）不算未使用。
     files: ["**/*.{ts,tsx,mjs}"],
     rules: {

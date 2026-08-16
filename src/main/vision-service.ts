@@ -3,12 +3,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
 import type { CredentialStore } from "./credential-store.js";
 import type { SettingsStore } from "./settings-store.js";
 import type {
-  DesktopAttachmentRecord,
   VisionBackendConfig,
   VisionRequest,
   VisionResult,
@@ -24,52 +22,31 @@ const baseBackend = {
   model: z.string().max(200),
   timeoutMs: z.number().int().min(1_000).max(300_000),
 };
-const mappingSchema = z.object({
-  imageArgument: z.string().min(1).max(120),
-  imageEncoding: z.enum(["data-url", "base64", "path"]),
-  questionArgument: z.string().max(120).nullable(),
-  mimeTypeArgument: z.string().max(120).nullable(),
-  resultTextPath: z.string().max(240).nullable(),
-});
 const directSchema = z.object({
   ...baseBackend,
   kind: z.literal("direct"),
   baseUrl: z.string().url(),
   credentialName,
-  headers: z.record(z.string(), z.string()),
-  headerCredentialNames: z.record(z.string(), credentialName),
 });
-const mcpStdioSchema = z.object({
+const mcpSchema = z.object({
   ...baseBackend,
   kind: z.literal("mcp"),
-  transport: z.literal("stdio"),
   command: z.string().min(1).max(500),
   args: z.array(z.string().max(1_000)).max(100),
   cwd: z.string().max(1_000),
-  env: z.record(z.string(), z.string()),
-  envCredentialNames: z.record(z.string(), credentialName),
-  allowLocalPath: z.boolean(),
   toolName: z.string().max(240),
-  mapping: mappingSchema,
-});
-const mcpHttpSchema = z.object({
-  ...baseBackend,
-  kind: z.literal("mcp"),
-  transport: z.literal("streamable-http"),
-  url: z.string().url(),
-  headers: z.record(z.string(), z.string()),
-  headerCredentialNames: z.record(z.string(), credentialName),
-  toolName: z.string().max(240),
-  mapping: mappingSchema,
+  imageArgument: z.string().min(1).max(120),
+  questionArgument: z.string().max(120),
 });
 export const visionBackendSchema = z.discriminatedUnion("kind", [
   directSchema,
-  z.discriminatedUnion("transport", [mcpStdioSchema, mcpHttpSchema]),
+  mcpSchema,
 ]);
 export const visionSettingsSchema = z.object({
   policy: z.enum(["auto", "always", "off"]),
   defaultBackendId: z.string().nullable(),
   remoteDisclosureAccepted: z.boolean(),
+  imageDirectory: z.string().max(2000).optional().nullable(),
   backends: z.array(visionBackendSchema).max(32),
 });
 const requestSchema = z
@@ -92,6 +69,7 @@ export const DEFAULT_VISION_SETTINGS: VisionSettings = {
   policy: "auto",
   defaultBackendId: null,
   remoteDisclosureAccepted: false,
+  imageDirectory: null,
   backends: [],
 };
 interface CacheFile {
@@ -101,30 +79,17 @@ interface CacheFile {
 function sha(value: Buffer | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+// baseUrl 是完整 API 根（如 dashscope .../compatible-mode/v1、智谱 .../paas/v4、
+// Ollama http://127.0.0.1:11434/v1），只做去尾斜杠后拼接路径，不再自动补 /v1
+// （那会让智谱 v4 等路径变成 .../v4/v1/... 导致 404）。
 function endpoint(baseUrl: string, suffix: string): string {
   return baseUrl.endsWith(suffix)
     ? baseUrl
-    : `${baseUrl.replace(/\/$/, "")}${baseUrl.endsWith("/v1") ? "" : "/v1"}${suffix}`;
-}
-function getPath(value: unknown, dottedPath: string | null): unknown {
-  if (!dottedPath) return value;
-  return dottedPath
-    .split(".")
-    .filter(Boolean)
-    .reduce<unknown>(
-      (current, key) =>
-        current && typeof current === "object"
-          ? (current as Record<string, unknown>)[key]
-          : undefined,
-      value,
-    );
+    : `${baseUrl.replace(/\/$/, "")}${suffix}`;
 }
 
 export class VisionService {
   private readonly cachePath: string;
-  private readonly attachmentsPath: string;
-  private readonly attachmentImagesDirectory: string;
-  private readonly active = new Map<string, AbortController>();
 
   constructor(
     private readonly settings: SettingsStore,
@@ -132,12 +97,6 @@ export class VisionService {
     userDataPath: string,
   ) {
     this.cachePath = path.join(userDataPath, "vision-cache.json");
-    this.attachmentsPath = path.join(userDataPath, "vision-attachments.json");
-    this.attachmentImagesDirectory = path.join(
-      userDataPath,
-      "vision-attachments",
-      "images",
-    );
   }
 
   getSettings(): VisionSettings {
@@ -152,47 +111,11 @@ export class VisionService {
     for (const backend of parsed.backends) {
       if (ids.has(backend.id)) throw new Error("视觉服务 ID 不能重复");
       ids.add(backend.id);
-      if (
-        backend.kind === "mcp" &&
-        backend.transport === "streamable-http" &&
-        backend.mapping.imageEncoding === "path"
-      )
-        throw new Error("远程 MCP 不能接收本机文件路径");
-      if (
-        backend.kind === "mcp" &&
-        backend.transport === "stdio" &&
-        backend.mapping.imageEncoding === "path" &&
-        !backend.allowLocalPath
-      )
-        throw new Error("本地路径传输尚未授权");
     }
     if (parsed.defaultBackendId && !ids.has(parsed.defaultBackendId))
       throw new Error("默认视觉服务不存在");
     await this.settings.patch({ vision: parsed });
     return this.getSettings();
-  }
-
-  private async credentialMap(
-    names: Record<string, string>,
-  ): Promise<Record<string, string>> {
-    const result: Record<string, string> = {};
-    for (const [target, name] of Object.entries(names)) {
-      const value = await this.credentials.get(name);
-      if (!value) throw new Error(`凭据 ${name} 尚未配置`);
-      result[target] = value;
-    }
-    return result;
-  }
-
-  private async headers(
-    backend:
-      | Extract<VisionBackendConfig, { kind: "direct" }>
-      | Extract<VisionBackendConfig, { transport: "streamable-http" }>,
-  ): Promise<Record<string, string>> {
-    return {
-      ...backend.headers,
-      ...(await this.credentialMap(backend.headerCredentialNames)),
-    };
   }
 
   private async directHeaders(
@@ -203,7 +126,6 @@ export class VisionService {
     return {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
-      ...(await this.headers(backend)),
     };
   }
 
@@ -214,56 +136,40 @@ export class VisionService {
       name: "deepseek-harness-desktop-vision",
       version: "0.1.0",
     });
-    if (backend.transport === "stdio") {
-      const inheritedNames =
-        process.platform === "win32"
-          ? [
-              "PATH",
-              "Path",
-              "PATHEXT",
-              "SystemRoot",
-              "WINDIR",
-              "TEMP",
-              "TMP",
-              "USERPROFILE",
-              "APPDATA",
-              "LOCALAPPDATA",
-              "ComSpec",
-            ]
-          : ["PATH", "HOME", "SHELL", "TMPDIR", "LANG"];
-      const inherited = Object.fromEntries(
-        inheritedNames.flatMap((name) =>
-          process.env[name] ? [[name, process.env[name]!]] : [],
-        ),
-      );
-      const env = {
-        ...inherited,
-        ...backend.env,
-        ...(await this.credentialMap(backend.envCredentialNames)),
-      };
-      const transport = new StdioClientTransport({
-        command: backend.command,
-        args: backend.args,
-        cwd: backend.cwd || undefined,
-        env,
-      });
-      await client.connect(transport);
-    } else {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(backend.url),
-        { requestInit: { headers: await this.headers(backend) } },
-      );
-      await client.connect(transport);
-    }
+    const inheritedNames =
+      process.platform === "win32"
+        ? [
+            "PATH",
+            "Path",
+            "PATHEXT",
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "ComSpec",
+          ]
+        : ["PATH", "HOME", "SHELL", "TMPDIR", "LANG"];
+    const env = Object.fromEntries(
+      inheritedNames.flatMap((name) =>
+        process.env[name] ? [[name, process.env[name]!]] : [],
+      ),
+    );
+    const transport = new StdioClientTransport({
+      command: backend.command,
+      args: backend.args,
+      cwd: backend.cwd || undefined,
+      env,
+    });
+    await client.connect(transport);
     return client;
   }
 
-  async discoverTools(
-    value: VisionBackendConfig,
+  private async discoverTools(
+    backend: Extract<VisionBackendConfig, { kind: "mcp" }>,
   ): Promise<VisionToolDescriptor[]> {
-    const backend = visionBackendSchema.parse(value) as VisionBackendConfig;
-    if (backend.kind !== "mcp")
-      throw new Error("Direct API 不提供 MCP 工具列表");
     const client = await this.createMcp(backend);
     try {
       const result = await client.listTools();
@@ -287,14 +193,17 @@ export class VisionService {
       headers: await this.directHeaders(backend),
       signal: AbortSignal.timeout(backend.timeoutMs),
     });
-    if (!response.ok)
-      throw new Error(`视觉 API 连接失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `视觉 API 连接失败（HTTP ${response.status}）${detail ? "：" + detail.slice(0, 300) : ""}`,
+      );
+    }
     return { ok: true };
   }
 
   private async image(
     request: VisionRequest,
-    backend: VisionBackendConfig,
   ): Promise<{ buffer: Buffer; dataUrl: string; localPath?: string }> {
     if (request.imageDataUrl) {
       const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(
@@ -307,21 +216,18 @@ export class VisionService {
         throw new Error("图片大小必须在 20 MB 以内");
       return { buffer, dataUrl: request.imageDataUrl };
     }
-    if (
-      !request.imagePath ||
-      backend.kind !== "mcp" ||
-      backend.transport !== "stdio" ||
-      !backend.allowLocalPath
-    )
-      throw new Error("当前视觉服务不允许读取本机路径");
-    const buffer = await readFile(path.resolve(request.imagePath));
-    if (!buffer.length || buffer.length > 20 * 1024 * 1024)
-      throw new Error("图片大小必须在 20 MB 以内");
-    return {
-      buffer,
-      dataUrl: `data:${request.mimeType};base64,${buffer.toString("base64")}`,
-      localPath: path.resolve(request.imagePath),
-    };
+    if (request.imagePath) {
+      const resolved = path.resolve(request.imagePath);
+      const buffer = await readFile(resolved);
+      if (!buffer.length || buffer.length > 20 * 1024 * 1024)
+        throw new Error("图片大小必须在 20 MB 以内");
+      return {
+        buffer,
+        dataUrl: `data:${request.mimeType};base64,${buffer.toString("base64")}`,
+        localPath: resolved,
+      };
+    }
+    throw new Error("必须提供图片");
   }
 
   private key(
@@ -358,60 +264,6 @@ export class VisionService {
     );
   }
 
-  async listAttachments(
-    sessionId?: string,
-  ): Promise<DesktopAttachmentRecord[]> {
-    let records: DesktopAttachmentRecord[];
-    try {
-      records = JSON.parse(
-        await readFile(this.attachmentsPath, "utf8"),
-      ) as DesktopAttachmentRecord[];
-    } catch {
-      return [];
-    }
-    return records
-      .filter((entry) => !sessionId || entry.sessionId === sessionId)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-
-  private async recordAttachment(
-    record: DesktopAttachmentRecord,
-  ): Promise<void> {
-    const records = await this.listAttachments();
-    const next = [
-      record,
-      ...records.filter((entry) => entry.id !== record.id),
-    ].slice(0, 500);
-    await mkdir(path.dirname(this.attachmentsPath), { recursive: true });
-    await writeFile(
-      this.attachmentsPath,
-      `${JSON.stringify(next, null, 2)}\n`,
-      { mode: 0o600 },
-    );
-  }
-
-  private attachment(
-    request: VisionRequest,
-    imageHash: string,
-    backendId: string | null,
-    status: DesktopAttachmentRecord["status"],
-    visionText: string | null,
-    errorSummary: string | null,
-  ): DesktopAttachmentRecord {
-    return {
-      id: request.requestId,
-      sessionId: request.sessionId ?? null,
-      requestId: request.requestId,
-      mimeType: request.mimeType,
-      imageHash,
-      backendId,
-      status,
-      visionText,
-      errorSummary,
-      createdAt: new Date().toISOString(),
-    };
-  }
-
   private selected(request: VisionRequest): VisionBackendConfig {
     const settings = this.getSettings();
     const id = request.backendId ?? settings.defaultBackendId;
@@ -419,120 +271,52 @@ export class VisionService {
       (entry) => entry.id === id && entry.enabled,
     );
     if (!backend) throw new Error("请选择一个已启用的视觉服务");
-    if (
-      (backend.kind === "direct" || backend.transport === "streamable-http") &&
-      !settings.remoteDisclosureAccepted
-    )
+    if (backend.kind === "direct" && !settings.remoteDisclosureAccepted)
       throw new Error(
         "首次向远程视觉服务发送图片前，请在设置中确认数据外发提示",
       );
     return backend;
   }
 
-  async cached(requestValue: VisionRequest): Promise<VisionResult | null> {
-    const request = requestSchema.parse(requestValue) as VisionRequest;
-    const backend = this.selected(request);
-    const image = await this.image(request, backend);
-    const value = (await this.cache()).entries[
-      this.key(backend, sha(image.buffer), request.question)
-    ];
-    return value
-      ? { ...value, cached: true, requestId: request.requestId }
-      : null;
-  }
-
   async analyze(requestValue: VisionRequest): Promise<VisionResult> {
     const request = requestSchema.parse(requestValue) as VisionRequest;
     const backend = this.selected(request);
-    const image = await this.image(request, backend);
+    const image = await this.image(request);
     const imageHash = sha(image.buffer);
     const cacheKey = this.key(backend, imageHash, request.question);
-    await mkdir(this.attachmentImagesDirectory, { recursive: true });
-    await writeFile(
-      path.join(this.attachmentImagesDirectory, imageHash),
-      image.buffer,
-      { mode: 0o600 },
-    );
     if (!request.force) {
       const hit = (await this.cache()).entries[cacheKey];
-      if (hit) {
-        const cached = { ...hit, requestId: request.requestId, cached: true };
-        await this.recordAttachment(
-          this.attachment(
-            request,
-            imageHash,
-            backend.id,
-            "ready",
-            cached.text,
-            null,
-          ),
-        );
-        return cached;
-      }
+      if (hit) return { ...hit, requestId: request.requestId, cached: true };
     }
-    await this.recordAttachment(
-      this.attachment(request, imageHash, backend.id, "analyzing", null, null),
-    );
     const controller = new AbortController();
-    this.active.set(request.requestId, controller);
     const startedAt = Date.now();
-    try {
-      const output =
-        backend.kind === "direct"
-          ? await this.analyzeDirect(
-              backend,
-              request,
-              image.dataUrl,
-              controller.signal,
-            )
-          : await this.analyzeMcp(backend, request, image, controller.signal);
-      if (!output.text.trim())
-        throw new Error("视觉服务没有返回可供纯文本模型使用的文字");
-      const result: VisionResult = {
-        requestId: request.requestId,
-        backendId: backend.id,
-        backendName: backend.name,
-        model: backend.model,
-        text: output.text.trim(),
-        imageHash,
-        cached: false,
-        durationMs: Date.now() - startedAt,
-        createdAt: new Date().toISOString(),
-        usage: output.usage,
-      };
-      const cache = await this.cache();
-      cache.entries[cacheKey] = result;
-      await this.writeCache(cache);
-      await this.recordAttachment(
-        this.attachment(
-          request,
-          imageHash,
-          backend.id,
-          "ready",
-          result.text,
-          null,
-        ),
-      );
-      return result;
-    } catch (error) {
-      await this.recordAttachment(
-        this.attachment(
-          request,
-          imageHash,
-          backend.id,
-          "failed",
-          null,
-          error instanceof Error ? error.message : String(error),
-        ),
-      );
-      throw error;
-    } finally {
-      this.active.delete(request.requestId);
-    }
-  }
-
-  cancel(requestId: string): void {
-    this.active.get(requestId)?.abort();
+    const output =
+      backend.kind === "direct"
+        ? await this.analyzeDirect(
+            backend,
+            request,
+            image.dataUrl,
+            controller.signal,
+          )
+        : await this.analyzeMcp(backend, request, image, controller.signal);
+    if (!output.text.trim())
+      throw new Error("视觉服务没有返回可供纯文本模型使用的文字");
+    const result: VisionResult = {
+      requestId: request.requestId,
+      backendId: backend.id,
+      backendName: backend.name,
+      model: backend.model,
+      text: output.text.trim(),
+      imageHash,
+      cached: false,
+      durationMs: Date.now() - startedAt,
+      createdAt: new Date().toISOString(),
+      usage: output.usage,
+    };
+    const cache = await this.cache();
+    cache.entries[cacheKey] = result;
+    await this.writeCache(cache);
+    return result;
   }
 
   private async analyzeDirect(
@@ -568,8 +352,12 @@ export class VisionService {
         }),
       },
     );
-    if (!response.ok)
-      throw new Error(`视觉 API 请求失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `视觉 API 请求失败（HTTP ${response.status}）${detail ? "：" + detail.slice(0, 300) : ""}`,
+      );
+    }
     const body = (await response.json()) as {
       choices?: Array<{ message?: { content?: unknown } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -604,20 +392,14 @@ export class VisionService {
     signal: AbortSignal,
   ): Promise<{ text: string; usage: VisionResult["usage"] }> {
     if (!backend.toolName) throw new Error("尚未选择 MCP 视觉工具");
-    const args: Record<string, unknown> = {};
-    const mapping = backend.mapping;
-    args[mapping.imageArgument] =
-      mapping.imageEncoding === "data-url"
-        ? image.dataUrl
-        : mapping.imageEncoding === "base64"
-          ? image.buffer.toString("base64")
-          : image.localPath;
-    if (mapping.imageEncoding === "path" && !image.localPath)
-      throw new Error("此请求没有可授权给本地 MCP 的文件路径");
-    if (mapping.questionArgument)
-      args[mapping.questionArgument] = request.question || "请详细描述图片";
-    if (mapping.mimeTypeArgument)
-      args[mapping.mimeTypeArgument] = request.mimeType;
+    if (!image.localPath)
+      throw new Error("本地 MCP 视觉服务需要本机图片文件路径");
+    const args: Record<string, unknown> = {
+      [backend.imageArgument]: image.localPath,
+    };
+    if (backend.questionArgument)
+      args[backend.questionArgument] =
+        request.question || "请详细描述图片";
     const client = await this.createMcp(backend);
     try {
       const result = await client.callTool(
@@ -626,12 +408,6 @@ export class VisionService {
         { signal, timeout: backend.timeoutMs },
       );
       if (result.isError) throw new Error("MCP 视觉工具返回了错误结果");
-      const extracted = getPath(result, mapping.resultTextPath);
-      if (typeof extracted === "string")
-        return {
-          text: extracted,
-          usage: { inputTokens: null, outputTokens: null },
-        };
       const content = Array.isArray(result.content) ? result.content : [];
       const text = content
         .filter(
@@ -647,11 +423,4 @@ export class VisionService {
       await client.close();
     }
   }
-}
-
-export function composeVisionPrompt(
-  question: string,
-  result: VisionResult,
-): string {
-  return `${question.trim()}\n\n<desktop_vision_context backend="${result.backendName}" model="${result.model}" image_sha256="${result.imageHash}">\n${result.text}\n</desktop_vision_context>`;
 }

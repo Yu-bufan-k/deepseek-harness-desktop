@@ -10,12 +10,20 @@ export async function writeDesktopOverlay(
   directory: string,
   pluginPath: string,
   billingPluginPath?: string,
+  memoryPluginPath?: string,
+  visionPluginPath?: string,
 ): Promise<string> {
   await mkdir(directory, { recursive: true });
   const overlayPath = path.join(directory, "desktop.cordis.patch.yml");
   const pluginUrl = pathToFileURL(pluginPath).href;
   const billingPluginUrl = billingPluginPath
     ? pathToFileURL(billingPluginPath).href
+    : null;
+  const memoryPluginUrl = memoryPluginPath
+    ? pathToFileURL(memoryPluginPath).href
+    : null;
+  const visionPluginUrl = visionPluginPath
+    ? pathToFileURL(visionPluginPath).href
     : null;
   const contents = [
     "# 由 DeepSeek Harness Desktop 管理。请勿手动编辑。",
@@ -31,6 +39,18 @@ export async function writeDesktopOverlay(
       ? [
           "    - id: desktop-billing",
           `      name: ${yamlString(billingPluginUrl)}`,
+        ]
+      : []),
+    ...(memoryPluginUrl
+      ? [
+          "    - id: desktop-memory",
+          `      name: ${yamlString(memoryPluginUrl)}`,
+        ]
+      : []),
+    ...(visionPluginUrl
+      ? [
+          "    - id: desktop-vision",
+          `      name: ${yamlString(visionPluginUrl)}`,
         ]
       : []),
     "",

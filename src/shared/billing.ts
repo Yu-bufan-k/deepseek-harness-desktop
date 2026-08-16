@@ -84,6 +84,10 @@ export interface BillingUsageSample {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   outputTokens: number;
+  /** 预留的 API key 维度：只存 key ID/hash，绝不明文。今天投影不填充，
+   *  UI 以 provider 作为 key 的过渡代理分片；将来多 key 时由 Harness patch
+   *  / `request/header` 读取后填充。 */
+  apiKey?: string | null;
 }
 
 export interface BillingModelBucket {
@@ -91,6 +95,10 @@ export interface BillingModelBucket {
   cacheRead: number;
   cacheWrite: number;
   output: number;
+  /** 该模型的请求数，供按 provider 归组时重算桶级 requests。 */
+  requests: number;
+  /** 该模型费用：currency → nanos（与 BillingMoney 一致）。 */
+  cost: Record<string, string>;
 }
 
 export interface BillingUsageSeriesBucket {
@@ -103,11 +111,22 @@ export interface BillingUsageSeriesBucket {
   cost: Record<string, string>;
 }
 
+export interface BillingSessionTools {
+  /** 普通工具名 → 调用次数。 */
+  tools: Record<string, number>;
+  /** MCP server → 调用次数（按 mcp__<server>__<raw> 前缀聚合）。 */
+  mcp: Record<string, number>;
+  /** 技能名 → 调用次数（skill 工具加载 + /技能 手势）。 */
+  skills: Record<string, number>;
+}
+
 export interface BillingSessionUsage {
   sessionId: string;
   title: string;
   revision: string;
   samples: BillingUsageSample[];
+  /** 该会话的工具/技能/MCP 调用聚合（随 revision 变更失效重算）。 */
+  tools?: BillingSessionTools;
 }
 export interface BillingUsageIndex {
   collectedAt: string;
@@ -165,6 +184,8 @@ export interface BillingSessionUsageSummary {
   lastUsageAt: string | null;
   totals: BillingMoney[];
   models: BillingModelUsageSummary[];
+  /** 该会话的工具/技能/MCP 调用聚合（可能为空）。 */
+  tools?: BillingSessionTools;
 }
 
 export interface BillingUsageReport {
@@ -493,6 +514,16 @@ function addMoney(
   target.set(currency, (target.get(currency) ?? 0n) + BigInt(nanos));
 }
 
+function addCostRecord(
+  target: Record<string, string>,
+  currency: string,
+  nanos: string,
+): void {
+  target[currency] = (
+    BigInt(target[currency] ?? "0") + BigInt(nanos)
+  ).toString();
+}
+
 export function formatBillingMoney(
   currency: string,
   nanosValue: string,
@@ -628,9 +659,17 @@ function summarizeSession(
     bucket.requests += 1;
     let modelBucket = bucket.models.get(key);
     if (!modelBucket) {
-      modelBucket = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+      modelBucket = {
+        input: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 0,
+        requests: 0,
+        cost: {},
+      };
       bucket.models.set(key, modelBucket);
     }
+    modelBucket.requests += 1;
     modelBucket.input += sample.uncachedInputTokens;
     modelBucket.cacheRead += sample.cacheReadTokens;
     modelBucket.cacheWrite += sample.cacheWriteTokens;
@@ -665,6 +704,7 @@ function summarizeSession(
       addMoney(sessionTotals, line.currency, line.amountNanos);
       addMoney(model.totals, line.currency, line.amountNanos);
       addMoney(bucket.cost, line.currency, line.amountNanos);
+      addCostRecord(modelBucket.cost, line.currency, line.amountNanos);
     }
   }
   return {
@@ -679,6 +719,7 @@ function summarizeSession(
       unpricedRequests,
       lastUsageAt: latestTime ? new Date(latestTime).toISOString() : null,
       totals: moneyList(sessionTotals),
+      tools: session.tools,
       models: [...models.values()].map(({ summary, totals }) => ({
         ...summary,
         totals: moneyList(totals),
@@ -763,7 +804,14 @@ export class BillingUsageSummarizer {
             merged.cacheRead += modelBucket.cacheRead;
             merged.cacheWrite += modelBucket.cacheWrite;
             merged.output += modelBucket.output;
-          } else aggregate.models.set(modelKey, { ...modelBucket });
+            merged.requests += modelBucket.requests;
+            for (const [currency, nanos] of Object.entries(modelBucket.cost))
+              addCostRecord(merged.cost, currency, nanos);
+          } else
+            aggregate.models.set(modelKey, {
+              ...modelBucket,
+              cost: { ...modelBucket.cost },
+            });
         }
         for (const [currency, nanos] of bucket.cost)
           addMoney(aggregate.cost, currency, nanos.toString());
@@ -815,7 +863,7 @@ export class BillingUsageSummarizer {
         models: Object.fromEntries(
           [...aggregate.models.entries()].map(([key, bucket]) => [
             key,
-            { ...bucket },
+            { ...bucket, cost: { ...bucket.cost } },
           ]),
         ),
         cost: Object.fromEntries(

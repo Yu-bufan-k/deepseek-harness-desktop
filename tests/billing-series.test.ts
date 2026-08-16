@@ -108,18 +108,23 @@ describe("billing usage series", () => {
     const first = report.series[0]!;
     const second = report.series[1]!;
     expect(first.requests).toBe(4); // a(08:10) + a(08:50) + a(08:30, reasoner) + b(08:20)
+    // 每笔 off-peak 计价 = 1.5 + 0.05 + 0.2 + 4.5 = 6.25 元 = 6.25e9 nanos
     expect(first.models).toEqual({
       [JSON.stringify(["deepseek-official", "deepseek-v4-flash"])]: {
         input: 3_000_000,
         cacheRead: 3_000_000,
         cacheWrite: 3_000_000,
         output: 3_000_000,
+        requests: 3,
+        cost: { CNY: "18750000000" },
       },
       [JSON.stringify(["deepseek-official", "deepseek-reasoner"])]: {
         input: 1_000_000,
         cacheRead: 1_000_000,
         cacheWrite: 1_000_000,
         output: 1_000_000,
+        requests: 1,
+        cost: {},
       },
     });
     expect(second.requests).toBe(1);
@@ -197,6 +202,48 @@ describe("billing usage series", () => {
     );
   });
 
+  it("tracks requests and cost per model, enabling a per-provider slice", () => {
+    const report = summarizeBillingUsage(
+      settings,
+      index([
+        {
+          sessionId: "s",
+          title: "S",
+          revision: "1",
+          samples: [
+            sample("2026-08-18T08:00:00+08:00"),
+            { ...sample("2026-08-18T08:10:00+08:00"), provider: "fireworks" },
+          ],
+        },
+      ]),
+      "2026-08-18T00:00:00Z",
+    );
+    const bucket = report.series[0]!;
+    expect(bucket.requests).toBe(2);
+    // 只有 deepseek-official 有匹配的计价规则
+    expect(bucket.cost.CNY).toBe(String(6.25e9));
+    expect(
+      bucket.models[JSON.stringify(["deepseek-official", "deepseek-v4-flash"])],
+    ).toEqual({
+      input: 1_000_000,
+      cacheRead: 1_000_000,
+      cacheWrite: 1_000_000,
+      output: 1_000_000,
+      requests: 1,
+      cost: { CNY: "6250000000" },
+    });
+    expect(
+      bucket.models[JSON.stringify(["fireworks", "deepseek-v4-flash"])],
+    ).toEqual({
+      input: 1_000_000,
+      cacheRead: 1_000_000,
+      cacheWrite: 1_000_000,
+      output: 1_000_000,
+      requests: 1,
+      cost: {},
+    });
+  });
+
   it("maps sessions to their hour buckets and rebuilds series on settings change", () => {
     const summarizer = new BillingUsageSummarizer();
     const usage = index([
@@ -258,10 +305,16 @@ describe("billing usage series", () => {
       sessions: 2,
     });
     expect(third.series[0]!.cost).toEqual({ CNY: "0" });
-    expect(
-      third.series.map((bucket) => ({ ...bucket, cost: { CNY: "0" } })),
-    ).toEqual(
-      first.series.map((bucket) => ({ ...bucket, cost: { CNY: "0" } })),
-    );
+    const zeroed = (bucket: (typeof first.series)[number]) => ({
+      ...bucket,
+      cost: { CNY: "0" },
+      models: Object.fromEntries(
+        Object.entries(bucket.models).map(([key, part]) => [
+          key,
+          { ...part, cost: { CNY: "0" } },
+        ]),
+      ),
+    });
+    expect(third.series.map(zeroed)).toEqual(first.series.map(zeroed));
   });
 });

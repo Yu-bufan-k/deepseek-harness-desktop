@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UpdateChannel, VisionSettings } from "../shared/contracts.js";
 import type { BillingSettings } from "../shared/billing.js";
+import type { QuotaSettings } from "../shared/quota.js";
 
 export interface DesktopSettings {
   workspacePath: string | null;
@@ -10,8 +11,11 @@ export interface DesktopSettings {
   lastGoodVersion: string | null;
   pendingVersion: string | null;
   failedStarts: number;
+  /** 事件日志目录；null = 默认 userData/logs */
+  eventLogDirectory?: string | null;
   billing?: BillingSettings;
   vision?: VisionSettings;
+  quota?: QuotaSettings;
 }
 
 const defaults: DesktopSettings = {

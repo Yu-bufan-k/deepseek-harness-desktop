@@ -37,6 +37,15 @@ export const modelLabel = (key: string): string => {
     return key;
   }
 };
+/** 从 model key（JSON.stringify([provider, model])，provider 已 normalize）解析 provider。 */
+export const modelProvider = (key: string): string => {
+  try {
+    const [provider] = JSON.parse(key) as [string, string];
+    return provider;
+  } catch {
+    return key;
+  }
+};
 export const sumModelTokens = (
   bucket: BillingModelBucket | undefined,
 ): number =>
@@ -67,34 +76,70 @@ export function rangeBounds(
   return end > start ? { start, end } : null;
 }
 
-/** 把报告里稀疏的小时桶收敛到所选范围内；范围 ≤ 24h 按小时，否则按天聚合。 */
+/** 报告里出现的去重 provider（原样大小写），供分片筛选。 */
+export function providerOptions(
+  sessions: ReadonlyArray<{ models: ReadonlyArray<{ provider: string }> }>,
+): string[] {
+  const seen = new Set<string>();
+  for (const session of sessions)
+    for (const model of session.models) seen.add(model.provider);
+  return [...seen].sort((left, right) => left.localeCompare(right));
+}
+
+/** 把报告里稀疏的小时桶收敛到所选范围内；范围 ≤ 24h 按小时，否则按天聚合。
+ *  传 provider 时只保留该厂商的模型，并按模型重算请求数与费用。 */
 export function rollupSeries(
   series: BillingUsageSeriesBucket[],
   start: number,
   end: number,
+  provider?: string | null,
 ): ChartBucket[] {
   const byKey = new Map<number, ChartBucket>();
   const hourly = end - start <= DAY_MS;
+  const normalizedProvider = provider?.trim().toLowerCase();
   for (const bucket of series) {
     if (bucket.hourStart < start || bucket.hourStart >= end) continue;
+    const activeModels = normalizedProvider
+      ? Object.entries(bucket.models).filter(
+          ([modelKey]) => modelProvider(modelKey) === normalizedProvider,
+        )
+      : Object.entries(bucket.models);
+    if (normalizedProvider && activeModels.length === 0) continue;
     const key = hourly ? bucket.hourStart : dayStart(bucket.hourStart);
     let target = byKey.get(key);
     if (!target) {
       target = { key, requests: 0, models: {}, cost: {} };
       byKey.set(key, target);
     }
-    target.requests += bucket.requests;
-    for (const [modelKey, part] of Object.entries(bucket.models)) {
+    for (const [modelKey, part] of activeModels) {
       const merged = target.models[modelKey];
       if (merged) {
         merged.input += part.input;
         merged.cacheRead += part.cacheRead;
         merged.cacheWrite += part.cacheWrite;
         merged.output += part.output;
-      } else target.models[modelKey] = { ...part };
+        merged.requests += part.requests;
+        for (const [currency, nanos] of Object.entries(part.cost))
+          merged.cost[currency] = String(
+            (merged.cost[currency] ? BigInt(merged.cost[currency]) : 0n) +
+              BigInt(nanos),
+          );
+      } else target.models[modelKey] = { ...part, cost: { ...part.cost } };
     }
-    for (const [currency, nanos] of Object.entries(bucket.cost))
-      target.cost[currency] = (target.cost[currency] ?? 0n) + BigInt(nanos);
+    if (normalizedProvider) {
+      target.requests = 0;
+      target.cost = {};
+      for (const part of Object.values(target.models)) {
+        target.requests += part.requests;
+        for (const [currency, nanos] of Object.entries(part.cost))
+          target.cost[currency] =
+            (target.cost[currency] ?? 0n) + BigInt(nanos);
+      }
+    } else {
+      target.requests += bucket.requests;
+      for (const [currency, nanos] of Object.entries(bucket.cost))
+        target.cost[currency] = (target.cost[currency] ?? 0n) + BigInt(nanos);
+    }
   }
   return [...byKey.values()].sort((left, right) => left.key - right.key);
 }
