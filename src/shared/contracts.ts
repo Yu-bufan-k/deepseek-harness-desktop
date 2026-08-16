@@ -178,6 +178,58 @@ export interface SavedVisionImage {
   mimeType: string;
 }
 
+export type AnalyticsRange = "today" | "7d" | "30d" | "all";
+
+export interface AnalyticsModelRow {
+  key: string;
+  label: string;
+  provider: string;
+  requests: number;
+  tokens: number;
+  costDisplay: string;
+}
+
+export interface AnalyticsToolRow {
+  name: string;
+  kind: "tools" | "mcp" | "skills";
+  count: number;
+}
+
+export interface AnalyticsBackendRow {
+  name: string;
+  requests: number;
+  errors: number;
+}
+
+export interface AnalyticsErrorRow {
+  ts: string;
+  area: string;
+  type: string;
+  message: string;
+}
+
+export interface AnalyticsReport {
+  range: AnalyticsRange;
+  kpi: {
+    costDisplay: string;
+    tokens: number;
+    requests: number;
+    errors: number;
+  };
+  series: Array<{ time: number; tokens: number; cost: number }>;
+  models: AnalyticsModelRow[];
+  tools: AnalyticsToolRow[];
+  vision: {
+    requests: number;
+    cached: number;
+    cacheRate: number;
+    avgDurationMs: number;
+    errors: number;
+    backends: AnalyticsBackendRow[];
+  };
+  errors: AnalyticsErrorRow[];
+}
+
 /** 视觉工具经桥调用主进程 VisionService 的请求 / 结果（仅主进程侧使用，不进 IPC）。 */
 export interface VisionAnalyzeRequest {
   imageId: string;
@@ -303,6 +355,9 @@ export const IPC = {
   pickEventLogDirectory: "desktop:pick-event-log-directory",
   getEventLogDirectory: "desktop:get-event-log-directory",
   resetEventLogDirectory: "desktop:reset-event-log-directory",
+  getAnalytics: "desktop:get-analytics",
+  openAnalytics: "desktop:open-analytics",
+  getRecentErrors: "desktop:get-recent-errors",
 } as const;
 
 export interface OpenWorkspaceRequest {
@@ -421,5 +476,13 @@ export interface DesktopApi {
   getEventLogDirectory(): Promise<string | null>;
   /** 恢复默认日志目录 */
   resetEventLogDirectory(): Promise<void>;
+  /** 本地用量分析报告（billing 聚合 + 事件日志） */
+  getAnalytics(range: AnalyticsRange): Promise<AnalyticsReport>;
+  /** 打开「用量分析」弹窗 */
+  openAnalytics(): Promise<void>;
+  /** 最近 withinMs 毫秒内的错误事件（内存缓存，按时间倒序） */
+  getRecentErrors(withinMs: number): Promise<
+    Array<{ ts: string; type: string; message: string }>
+  >;
   onWorkbenchNavigate(listener: (view: string) => void): () => void;
 }

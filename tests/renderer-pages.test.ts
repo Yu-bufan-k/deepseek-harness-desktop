@@ -148,7 +148,9 @@ describe("renderer pages", () => {
     expect(workbench).toContain("DiffEditor");
     expect(workbench).not.toContain("VisionView");
     expect(workbench).not.toContain("discoverVisionTools");
-    expect(workbench).not.toContain("vision");
+    expect(workbench).not.toContain("VisionBridge");
+    expect(workbench).toContain("AnalyticsView");
+    expect(workbench).toContain("视觉解析健康度");
     expect(workbench).toContain("撤销此处");
     expect(workbench).not.toContain('className="theme-card"');
     expect(workbench).not.toContain("theme-preview preview-");

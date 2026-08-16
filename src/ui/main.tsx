@@ -9,6 +9,8 @@ import { createRoot } from "react-dom/client";
 import type { BillingUsageReport } from "../shared/billing.js";
 import { formatBillingMoney } from "../shared/billing.js";
 import type {
+  AnalyticsRange,
+  AnalyticsReport,
   ChangeBatch,
   DesktopInfo,
   FileDiff,
@@ -40,9 +42,9 @@ import {
 } from "./usage-series.js";
 import "./styles.css";
 
-type View = "changes" | "billing" | "settings";
+type View = "changes" | "billing" | "settings" | "analytics";
 const WORKBENCH_VIEWS = new Set<View>(["changes"]);
-const POPUP_VIEWS = new Set<View>(["billing", "settings"]);
+const POPUP_VIEWS = new Set<View>(["billing", "settings", "analytics"]);
 const RANGE_PRESETS: Array<{ key: RangeKey; label: string }> = [
   { key: "today", label: "今日" },
   { key: "7d", label: "近7天" },
@@ -1223,6 +1225,321 @@ function BillingView() {
 }
 
 
+const ANALYTICS_RANGES: Array<{ key: AnalyticsRange; label: string }> = [
+  { key: "today", label: "今日" },
+  { key: "7d", label: "近7天" },
+  { key: "30d", label: "近30天" },
+  { key: "all", label: "全部" },
+];
+
+function buildAnalyticsOption(raw: AnalyticsReport["series"]): ChartOption {
+  const byDay = raw.length > 240;
+  const map = new Map<number, { tokens: number; cost: number }>();
+  for (const point of raw) {
+    const key = byDay ? dayStart(point.time) : point.time;
+    const row = map.get(key) ?? { tokens: 0, cost: 0 };
+    row.tokens += point.tokens;
+    row.cost += point.cost;
+    map.set(key, row);
+  }
+  const points = [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, value]) => ({ time, ...value }));
+  const label = (time: number) =>
+    byDay
+      ? toDateStr(time).slice(5)
+      : new Date(time).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+  return {
+    grid: { left: 46, right: 54, top: 16, bottom: 26 },
+    tooltip: { trigger: "axis" },
+    xAxis: {
+      type: "category",
+      data: points.map((point) => label(point.time)),
+      axisLine: { lineStyle: { color: cssVar("--wb-line", "#d9dde3") } },
+      axisLabel: { color: cssVar("--wb-faint", "#889096"), fontSize: 10 },
+    },
+    yAxis: [
+      {
+        type: "value",
+        name: "Token",
+        axisLabel: { color: cssVar("--wb-faint", "#889096"), fontSize: 10 },
+        splitLine: {
+          lineStyle: { color: cssVar("--wb-line-soft", "#eceef1") },
+        },
+      },
+      {
+        type: "value",
+        name: "¥",
+        axisLabel: { color: "#9A8B63", fontSize: 10 },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: "Token",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        data: points.map((point) => point.tokens),
+        lineStyle: { width: 1.5, color: "#6B7C8F" },
+        areaStyle: {
+          color: {
+            type: "linear",
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: "rgba(107,124,143,0.22)" },
+              { offset: 1, color: "rgba(107,124,143,0.02)" },
+            ],
+          },
+        },
+      },
+      {
+        name: "费用",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        yAxisIndex: 1,
+        data: points.map((point) => point.cost / 1e9),
+        lineStyle: { width: 1.5, color: "#9A8B63" },
+      },
+    ],
+  };
+}
+
+function AnalyticsChart({ series }: { series: AnalyticsReport["series"] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<EChartsType | null>(null);
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let disposed = false;
+    let chart: EChartsType | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let themeObserver: MutationObserver | null = null;
+    void import("./echarts.js").then(({ default: echarts }) => {
+      if (disposed) return;
+      chart = echarts.init(el);
+      chartRef.current = chart;
+      chart.setOption(buildAnalyticsOption(seriesRef.current));
+      resizeObserver = new ResizeObserver(() => chart!.resize());
+      resizeObserver.observe(el);
+      themeObserver = new MutationObserver(() =>
+        chart!.setOption(buildAnalyticsOption(seriesRef.current), true),
+      );
+      themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-ds-dark-theme"],
+      });
+    });
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      themeObserver?.disconnect();
+      chartRef.current?.dispose();
+      chartRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    chartRef.current?.setOption(buildAnalyticsOption(series), true);
+  }, [series]);
+  return <div className="analytics-chart" ref={containerRef} />;
+}
+
+function AnalyticsView() {
+  const [report, setReport] = useState<AnalyticsReport | null>(null);
+  const [range, setRange] = useState<AnalyticsRange>("7d");
+  const [refreshing, setRefreshing] = useState(false);
+  const load = useCallback(async (next: AnalyticsRange) => {
+    setRefreshing(true);
+    try {
+      setReport(await window.desktop.getAnalytics(next));
+    } catch {
+      setReport(null);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load(range);
+  }, [range, load]);
+  const vision = report?.vision;
+  const errorCount = report?.kpi.errors ?? 0;
+  return (
+    <div className="analytics-shell">
+      <header className="analytics-header">
+        <h1>用量分析</h1>
+        <div className="analytics-header-actions">
+          <div className="analytics-range" data-range={range}>
+            {ANALYTICS_RANGES.map((item) => (
+              <button
+                key={item.key}
+                className={range === item.key ? "active" : ""}
+                onClick={() => setRange(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+            <span className="analytics-range-thumb" aria-hidden="true" />
+          </div>
+          <button
+            className="analytics-refresh"
+            disabled={refreshing}
+            onClick={() => void load(range)}
+          >
+            {refreshing ? "刷新中…" : "刷新"}
+          </button>
+        </div>
+      </header>
+      {!report ? (
+        <div className="analytics-empty-state">正在聚合本地用量数据…</div>
+      ) : (
+        <>
+          <div className="analytics-kpis">
+            <div className="analytics-kpi is-money">
+              <span>总费用</span>
+              <strong>{report.kpi.costDisplay}</strong>
+            </div>
+            <div className="analytics-kpi">
+              <span>Token 总计</span>
+              <strong>{compactTokens(report.kpi.tokens)}</strong>
+            </div>
+            <div className="analytics-kpi">
+              <span>请求次数</span>
+              <strong>{report.kpi.requests}</strong>
+            </div>
+            <div
+              className={`analytics-kpi ${
+                errorCount > 0 ? "is-error" : "is-ok"
+              }`}
+            >
+              <span>错误记录</span>
+              <strong>{errorCount}</strong>
+            </div>
+          </div>
+          <div className="analytics-body">
+            <div className="analytics-main">
+              <section className="analytics-section">
+                <div className="analytics-section-title">Token 与费用趋势</div>
+                <AnalyticsChart series={report.series} />
+              </section>
+              <section className="analytics-section">
+                <div className="analytics-section-title">模型用量排行</div>
+                <div className="analytics-model-list">
+                  {report.models.length === 0 && (
+                    <p className="analytics-empty">还没有模型用量记录。</p>
+                  )}
+                  {report.models.map((model) => (
+                    <div className="analytics-model-row" key={model.key}>
+                      <span
+                        className="analytics-model-name"
+                        title={`${model.provider} / ${model.label}`}
+                      >
+                        {model.label}
+                      </span>
+                      <span className="analytics-model-provider">
+                        {model.provider}
+                      </span>
+                      <b>{compactTokens(model.tokens)}</b>
+                      <strong>{model.costDisplay}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+            <div className="analytics-sub">
+              <section className="analytics-section">
+                <div className="analytics-section-title">视觉解析健康度</div>
+                {vision && vision.requests > 0 ? (
+                  <div className="analytics-vision">
+                    <div className="analytics-vision-kpis">
+                      <span>
+                        <b>{vision.requests}</b> 请求
+                      </span>
+                      <span>
+                        <b>{Math.round(vision.cacheRate * 100)}%</b> 缓存命中
+                      </span>
+                      <span>
+                        <b>{Math.round(vision.avgDurationMs)}ms</b> 平均耗时
+                      </span>
+                      <span className={vision.errors > 0 ? "is-error" : ""}>
+                        <b>{vision.errors}</b> 失败
+                      </span>
+                    </div>
+                    <div className="analytics-backends">
+                      {vision.backends.map((backend) => (
+                        <div className="analytics-backend" key={backend.name}>
+                          <i
+                            className={
+                              backend.errors > 0 ? "is-error" : "is-ok"
+                            }
+                            aria-hidden="true"
+                          />
+                          <span>{backend.name}</span>
+                          <b>{backend.requests} 次</b>
+                          {backend.errors > 0 && (
+                            <small>{backend.errors} 失败</small>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="analytics-empty">没有视觉解析请求。</p>
+                )}
+              </section>
+              <section className="analytics-section">
+                <div className="analytics-section-title">工具使用 Top</div>
+                <div className="analytics-tools">
+                  {report.tools.length === 0 && (
+                    <p className="analytics-empty">还没有工具调用记录。</p>
+                  )}
+                  {report.tools.map((tool) => (
+                    <span
+                      className={`analytics-toolchip kind-${tool.kind}`}
+                      key={tool.kind + ":" + tool.name}
+                    >
+                      {tool.name}
+                      <b>{tool.count}</b>
+                    </span>
+                  ))}
+                </div>
+              </section>
+              <section className="analytics-section">
+                <div className="analytics-section-title">错误记录</div>
+                <div className="analytics-errors">
+                  {report.errors.length === 0 && (
+                    <p className="analytics-empty">这段时间没有错误。</p>
+                  )}
+                  {report.errors.map((error, index) => (
+                    <div className="analytics-error" key={index}>
+                      <span className="analytics-error-ts">
+                        {new Date(error.ts).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <span className="analytics-error-type">{error.type}</span>
+                      <small title={error.message}>{error.message}</small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({
   info,
   setInfo,
@@ -1568,6 +1885,15 @@ function App() {
     setToast({ message, error });
     setTimeout(() => setToast(null), 4200);
   }, []);
+  useEffect(() => {
+    const titles: Record<View, string> = {
+      changes: "代码变更",
+      billing: "用量与费用",
+      analytics: "用量分析",
+      settings: "桌面设置",
+    };
+    document.title = `${titles[view]} · DeepSeek Harness Desktop`;
+  }, [view]);
   const content = useMemo(
     () =>
       view === "changes" ? (
@@ -1577,6 +1903,8 @@ function App() {
         />
       ) : view === "billing" ? (
         <BillingView />
+      ) : view === "analytics" ? (
+        <AnalyticsView />
       ) : (
         <SettingsView info={info} setInfo={setInfo} />
       ),

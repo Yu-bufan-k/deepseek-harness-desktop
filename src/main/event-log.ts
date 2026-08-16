@@ -28,14 +28,30 @@ export interface EventLogOptions {
   retentionDays?: number;
 }
 
+export interface RecentError {
+  ts: string;
+  type: string;
+  message: string;
+}
+
 export class EventLog {
   private readonly directory: () => string;
   private readonly retentionDays: number;
   private seq = 0;
+  /** 内存中的最近错误（append error 时顺带记录，供状态徽标/分析实时读取，零文件 IO）。 */
+  private recentErrors: RecentError[] = [];
 
   constructor(options: EventLogOptions) {
     this.directory = options.directory;
     this.retentionDays = options.retentionDays ?? 30;
+  }
+
+  /** 最近 withinMs 毫秒内的错误事件（按时间倒序）。 */
+  getRecentErrors(withinMs: number): RecentError[] {
+    const cutoff = Date.now() - withinMs;
+    return this.recentErrors.filter(
+      (entry) => Date.parse(entry.ts) >= cutoff,
+    );
   }
 
   private dayStamp(date: Date): string {
@@ -66,6 +82,17 @@ export class EventLog {
       await appendFile(file, JSON.stringify(entry) + "\n", "utf8");
     } catch {
       // 日志失败不影响业务
+    }
+    if (area === "error") {
+      this.recentErrors.push({
+        ts: entry.ts,
+        type,
+        message:
+          typeof fields.message === "string"
+            ? fields.message.slice(0, 400)
+            : String(fields.message ?? type),
+      });
+      if (this.recentErrors.length > 50) this.recentErrors.shift();
     }
   }
 

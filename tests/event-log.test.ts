@@ -69,6 +69,19 @@ describe("EventLog", () => {
     ).toContain("two");
   });
 
+  it("keeps recent errors in memory for live status queries", async () => {
+    const { log } = await fixture();
+    await log.append("error", "vision-analyze", {
+      message: "视觉 API 请求失败（HTTP 404）",
+    });
+    await log.append("ipc", "save-vision-image", { imageId: "abc" });
+    const recent = log.getRecentErrors(60_000);
+    expect(recent).toHaveLength(1);
+    expect(recent[0]?.type).toBe("vision-analyze");
+    expect(recent[0]?.message).toContain("404");
+    expect(log.getRecentErrors(0)).toHaveLength(0);
+  });
+
   it("prunes files older than the retention window", async () => {
     const { directory, log } = await fixture();
     const stamp = dayStamp(new Date());

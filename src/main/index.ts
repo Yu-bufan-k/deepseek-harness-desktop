@@ -29,6 +29,7 @@ import {
   type UpdateState,
 } from "../shared/contracts.js";
 import { EventLog } from "./event-log.js";
+import { AnalyticsService } from "./analytics.js";
 import {
   billingSettingsSnapshot,
   BillingUsageSummarizer,
@@ -78,6 +79,7 @@ const pendingWorkspaceOpens = new Map<
 >();
 const earlyOpenPaths: string[] = [];
 let workbenchWindow: BrowserWindow | null = null;
+let analyticsWindow: BrowserWindow | null = null;
 let billingWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let usageWindow: BrowserWindow | null = null;
@@ -95,6 +97,7 @@ let activeWorkspaceContext: {
 let harness: HarnessManager;
 let settings: SettingsStore;
 let eventLog: EventLog;
+let analytics: AnalyticsService;
 let credentials: CredentialStore;
 let deepSeekBalance: DeepSeekBalanceService;
 let changeSets: ChangeSetService;
@@ -862,6 +865,30 @@ async function showBilling(target?: BillingModelTarget): Promise<void> {
   else await showUsageWindow();
 }
 
+async function showAnalytics(): Promise<void> {
+  if (analyticsWindow && !analyticsWindow.isDestroyed()) {
+    analyticsWindow.show();
+    analyticsWindow.focus();
+    return;
+  }
+  const window = createPopupWindow({
+    width: 1020,
+    height: 760,
+    minWidth: 780,
+    minHeight: 620,
+    icon: appIconPath(),
+    title: `用量分析 · ${PRODUCT_NAME}`,
+    backgroundColor: "#f7f8fa",
+  });
+  analyticsWindow = window;
+  window.on("closed", () => {
+    if (analyticsWindow === window) analyticsWindow = null;
+  });
+  await window.loadFile(rendererPath(path.join("workbench", "index.html")), {
+    query: { view: "analytics", mode: "popup" },
+  });
+}
+
 async function showLegacyBilling(target?: BillingModelTarget): Promise<void> {
   if (billingWindow && !billingWindow.isDestroyed()) {
     billingWindow.show();
@@ -1055,6 +1082,11 @@ function installMenu(): void {
             label: "计费与价格规则",
             accelerator: "CmdOrCtrl+Shift+U",
             click: () => void showBilling(),
+          },
+          {
+            label: "本地用量分析",
+            accelerator: "CmdOrCtrl+Shift+A",
+            click: () => void showAnalytics(),
           },
           { label: "检查更新…", click: () => void checkUpdatesWithFeedback() },
           { type: "separator" },
@@ -1539,6 +1571,19 @@ function registerIpc(): void {
     return picked;
   });
   handle(IPC.getEventLogDirectory, () => settings.get()?.eventLogDirectory ?? null);
+  handle(IPC.getAnalytics, (_event, range: unknown) =>
+    analytics.getReport(
+      range === "today" || range === "7d" || range === "30d" || range === "all"
+        ? range
+        : "7d",
+    ),
+  );
+  handle(IPC.openAnalytics, () => void showAnalytics());
+  handle(IPC.getRecentErrors, (_event, withinMs: unknown) =>
+    eventLog.getRecentErrors(
+      typeof withinMs === "number" && withinMs > 0 ? withinMs : 60_000,
+    ),
+  );
   handle(IPC.resetEventLogDirectory, async () => {
     await settings.patch({ eventLogDirectory: null });
     eventLog = new EventLog({
@@ -1685,6 +1730,10 @@ void app.whenReady().then(async () => {
     },
   });
   void eventLog.prune();
+  analytics = new AnalyticsService({
+    report: () => billingUsageReport,
+    logDirectory: () => eventLog.directoryPath(),
+  });
   billing = new BillingStore(settings, app.getAppPath());
   await billing.load();
   billingUsageReport = billingUsageSummarizer.summarize(
@@ -1754,8 +1803,12 @@ void app.whenReady().then(async () => {
           durationMs: result.durationMs,
         };
       } catch (cause) {
+        const backendName = settings.backends.find(
+          (backend) => backend.id === settings.defaultBackendId,
+        )?.name;
         void eventLog.append("error", "vision-analyze", {
           imageId: request.imageId,
+          backendName: backendName ?? null,
           durationMs: Date.now() - startedAt,
           message: cause instanceof Error ? cause.message : String(cause),
         });

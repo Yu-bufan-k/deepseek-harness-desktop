@@ -183,6 +183,10 @@ const api: DesktopApi = {
   getEventLogDirectory: () => ipcRenderer.invoke(IPC.getEventLogDirectory),
   resetEventLogDirectory: () =>
     ipcRenderer.invoke(IPC.resetEventLogDirectory),
+  getAnalytics: (range) => ipcRenderer.invoke(IPC.getAnalytics, range),
+  openAnalytics: () => ipcRenderer.invoke(IPC.openAnalytics),
+  getRecentErrors: (withinMs) =>
+    ipcRenderer.invoke(IPC.getRecentErrors, withinMs),
   onWorkbenchNavigate: (listener: (view: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, view: string) =>
       listener(view);
